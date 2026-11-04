@@ -1,0 +1,36 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: techdesk
+      POSTGRES_USER: techdesk
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-techdesk}
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U techdesk -d techdesk"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://techdesk:${POSTGRES_PASSWORD:-techdesk}@db:5432/techdesk
+      JWT_SECRET: ${JWT_SECRET:-}
+      DEMO_MODE: ${DEMO_MODE:-true}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:5173}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:5173:80"
+volumes:
+  pgdata:
