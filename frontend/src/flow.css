@@ -1,0 +1,15 @@
+/* Доповнення до style.css: стилі нового робочого потоку майстра та виправлення Firefox. */
+
+/* position: relative утримує приховані підписи (.sr-only) всередині прокручуваної області:
+   без цього Firefox прокручував усю сторінку разом із меню. */
+.workspace, .workspace-main { position: relative; }
+
+.day-more { margin: 10px 0 0; font-size: .9rem; }
+.day-recent { margin: 4px 0 0; color: var(--muted); }
+.day-recent strong { color: var(--ink); }
+.late-hint { color: var(--danger); font-weight: 600; }
+.nav-badge { margin-left: auto; min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--accent); color: var(--on-accent); font-size: .74rem; font-weight: 700; line-height: 20px; text-align: center; }
+.tab-hint { margin: -6px 0 12px; color: var(--muted); font-size: .9rem; }
+.quick-chip.client span, .quick-chip.free span { background: var(--warn-bg); color: var(--warn); }
+.quick-chip.late span { background: var(--danger-bg); color: var(--danger); }
+.quick-chip.pickup span { background: var(--ok-bg); color: var(--ok); }
