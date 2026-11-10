@@ -842,3 +842,9 @@ label > small { display: block; margin-top: 4px; font-weight: 400; font-size: .8
 
 /* Аналітика */
 .rating-summary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+/* Сканер */
+.scan-status { margin: 0; font-weight: 600; color: var(--ink-soft); }
+.scan-status.ok { color: var(--ok); }
+.scan-help ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; color: var(--ink-soft); }
+.scan-help > summary { font-size: .95rem; }
