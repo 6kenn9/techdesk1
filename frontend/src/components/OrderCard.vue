@@ -16,7 +16,7 @@ const stale = computed(() => !['completed', 'cancelled'].includes(props.item.sta
       <span v-if="item.priority === 'urgent'" class="tag danger"><Flame :size="12"/>Терміново</span>
       <span v-if="item.client_approval_status === 'rejected' && item.status === 'waiting_approval'" class="tag danger">Кошторис відхилено</span>
       <span v-if="item.is_warranty_case" class="tag ok"><ShieldCheck :size="12"/>Гарантія</span>
-      <span v-if="Number(item.total_cost)" class="tag mono">{{ money(item.total_cost) }}</span>
+      <span v-if="Number(item.total_cost)" class="order-card-sum mono">{{ money(item.total_cost) }}</span>
     </div>
   </RouterLink>
 </template>

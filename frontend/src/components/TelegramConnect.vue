@@ -57,7 +57,7 @@ async function disconnect() {
         <button class="button" :disabled="busy" @click="test"><BellRing :size="16"/> Тестове повідомлення</button>
         <button class="button" :disabled="busy" @click="disconnect">Вимкнути</button>
       </span>
-      <button v-else class="button primary" :disabled="busy" @click="connect"><Send :size="16"/> Підключити Telegram</button>
+      <button v-else class="button" :disabled="busy" @click="connect"><Send :size="16"/> Підключити Telegram</button>
     </section>
   </template>
 </template>

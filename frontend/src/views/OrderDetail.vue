@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft, ArrowUpRight, BadgeCheck, Check, CircleDollarSign, CircleX, Download, Inbox, PackageCheck, Plus, Search, ShieldCheck, Store, Trash2, Truck, Wrench } from 'lucide-vue-next'
 import { api, download } from '../api'
@@ -66,6 +66,8 @@ let refresh
 onMounted(async () => {
   try {
     assign(await api(base))
+    // Посилання з кабінету й QR-коду ведуть одразу до кошторису або документів.
+    if (location.hash) nextTick(() => document.querySelector(location.hash)?.scrollIntoView())
     if (session.staff) {
       const [services, people, passport] = await Promise.all([api('/warehouse/services'), api('/users?role=master'), api('/passports/' + item.value.device_id), loadStock()])
       catalog.value = services

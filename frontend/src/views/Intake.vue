@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Copy, FileText, Plus, Printer, UserPlus } from 'lucide-vue-next'
+import { ArrowLeft, Copy, FileText, Plus, Printer, ScanLine, UserPlus } from 'lucide-vue-next'
 import { api, download, query } from '../api'
 import { categorySpecs, devicePayload, emptyQuick, icons, problemHints, specLabels } from '../domain'
 import { useSession } from '../state'
@@ -17,6 +17,29 @@ const masters = ref([]), error = ref(''), busy = ref(false), done = ref(null)
 const device = computed(() => client.value?.devices.find(item => item.id === pick.value) || null)
 const claimLink = computed(() => done.value?.claim_token ? `${location.origin}/claim/${done.value.claim_token}` : '')
 let timer, sequence = 0
+// Приймання починається із серійного номера: за ним знаходимо паспорт, власника й гарантію.
+const serial = ref(''), serialState = ref(''), moreOpen = ref(false)
+let serialTimer, serialSeq = 0
+async function findBySerial(value) {
+  const seq = ++serialSeq
+  try {
+    const found = await api('/passports/lookup-sn/' + encodeURIComponent(value))
+    if (seq !== serialSeq) return
+    if (found) {
+      client.value = { full_name: found.owner_name, phone: '', is_guest: false, devices: [found], bySerial: true }
+      pick.value = found.id; searched.value = true; serialState.value = 'found'
+    } else {
+      if (client.value?.bySerial) { client.value = null; pick.value = null }
+      form.value.serial_number = value; serialState.value = 'new'
+    }
+  } catch (e) { error.value = e.message }
+}
+watch(serial, value => {
+  clearTimeout(serialTimer); serialState.value = ''
+  if (client.value?.bySerial) { client.value = null; pick.value = null }
+  form.value.serial_number = value
+  if (value.length >= 3) serialTimer = setTimeout(() => findBySerial(value), 400)
+})
 // Характеристики нового пристрою: підказка з довідника або з такого ж пристрою в базі, майстер може виправити.
 const specs = ref({}), specSource = ref(null), specsTouched = ref(false), savePreset = ref(false)
 const specFields = computed(() => categorySpecs[form.value.device_category] || [])
@@ -43,12 +66,8 @@ onMounted(async () => {
     const workers = await api('/users?role=master')
     masters.value = workers.filter(item => item.is_active && (session.admin || item.id === session.user.id))
     if (!session.admin) extra.master_id = session.user.id
-    const serial = route.query.serial
-    if (typeof serial === 'string' && serial) {
-      const found = await api('/passports/lookup-sn/' + encodeURIComponent(serial))
-      if (found) { client.value = { full_name: found.owner_name, phone: '', is_guest: false, devices: [found] }; pick.value = found.id; searched.value = true }
-      else form.value.serial_number = serial
-    }
+    // Перехід зі сканера: серійний номер уже відомий.
+    if (typeof route.query.serial === 'string' && route.query.serial) serial.value = route.query.serial
   } catch (e) { error.value = e.message }
 })
 watch(() => contact.phone, value => {
@@ -84,18 +103,23 @@ async function submit() {
 function hint(text) { const c = form.value.problem_description.trim(); if (!c.toLowerCase().includes(text.toLowerCase())) form.value.problem_description = c ? `${c}. ${text}` : text }
 async function file(path, name) { try { await download(path, name) } catch (e) { session.notify(e.message, 'error') } }
 async function copy() { try { await navigator.clipboard.writeText(claimLink.value); session.notify('Посилання скопійовано.') } catch { session.notify('Скопіюйте посилання вручну.', 'error') } }
-function again() { done.value = null; client.value = null; pick.value = null; searched.value = false; Object.assign(contact, { phone: '', full_name: '' }); form.value = emptyQuick(); specs.value = {}; specSource.value = null; specsTouched.value = false; savePreset.value = false; Object.assign(extra, { completeness: '', cosmetic_notes: '', priority: 'normal', is_warranty_case: false, delivery: { method: 'pickup', city: '', branch: '' } }) }
+function again() { serial.value = ''; moreOpen.value = false; done.value = null; client.value = null; pick.value = null; searched.value = false; Object.assign(contact, { phone: '', full_name: '' }); form.value = emptyQuick(); specs.value = {}; specSource.value = null; specsTouched.value = false; savePreset.value = false; Object.assign(extra, { completeness: '', cosmetic_notes: '', priority: 'normal', is_warranty_case: false, delivery: { method: 'pickup', city: '', branch: '' } }) }
 </script>
 <template>
   <RouterLink to="/orders" class="back"><ArrowLeft :size="16"/> Журнал заявок</RouterLink>
   <div class="page-head"><h1>Швидке приймання</h1></div>
+
+  <!-- Після збереження: документи й наступна заявка -->
   <section v-if="done" class="card form-card success-card">
     <h2>Заявку {{ done.order_number }} створено</h2>
     <p class="muted">{{ done.client }} · {{ done.device }}</p>
-    <p v-if="!done.serial_number" class="alert warranty">Серійний номер не внесено — додайте його в паспорті до початку діагностики.</p>
+    <p v-if="!done.serial_number" class="alert warranty">Серійний номер не внесено. Додайте його в паспорті до початку діагностики.</p>
     <template v-if="claimLink">
       <p>Для клієнта створено кабінет без пароля. Передайте посилання або продиктуйте його:</p>
-      <div class="claim-link"><input :value="claimLink" readonly aria-label="Посилання для клієнта"><button class="button" @click="copy"><Copy :size="16"/> Копіювати</button></div>
+      <div class="claim-link">
+        <input :value="claimLink" readonly aria-label="Посилання для клієнта">
+        <button class="button" @click="copy"><Copy :size="16"/> Копіювати</button>
+      </div>
     </template>
     <div class="actions">
       <button class="button" @click="file('/orders/' + done.id + '/pdf/receipt', done.order_number + '-квитанція.pdf')"><FileText :size="16"/> Квитанція</button>
@@ -104,47 +128,85 @@ function again() { done.value = null; client.value = null; pick.value = null; se
       <button class="button primary" @click="again"><Plus :size="16"/> Наступна заявка</button>
     </div>
   </section>
+
   <section v-else class="card form-card">
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <form class="form-stack" @submit.prevent="submit">
-      <div class="form-grid">
-        <label>Телефон клієнта<input v-model.trim="contact.phone" type="tel" inputmode="tel" placeholder="050 123 45 67" :required="!device" autofocus></label>
+
+      <!-- 1. Серійний номер: якщо пристрій уже був у сервісі, паспорт і гарантія підставляться самі -->
+      <label>Серійний номер
+        <span class="input-icon"><ScanLine :size="18"/><input v-model.trim="serial" maxlength="80" placeholder="З наліпки на корпусі або з налаштувань" autofocus></span>
+        <small v-if="serialState === 'found'">Пристрій є в базі: {{ device?.brand }} {{ device?.model }}, власник {{ client?.full_name }}.</small>
+        <small v-else-if="serialState === 'new'">Пристрою з таким номером ще немає. Його буде зареєстровано разом із заявкою.</small>
+        <small v-else>Якщо номера не видно, залиште поле порожнім і внесіть його пізніше в паспорті.</small>
+      </label>
+      <Warranty :warranty="passport?.warranty"/>
+      <label v-if="passport?.warranty" class="check"><input v-model="extra.is_warranty_case" type="checkbox"> Це гарантійний випадок (безкоштовно для клієнта)</label>
+
+      <!-- 2. Клієнт -->
+      <div v-if="!client?.bySerial" class="form-grid">
+        <label>Телефон клієнта<input v-model.trim="contact.phone" type="tel" inputmode="tel" placeholder="050 123 45 67" :required="!device"></label>
         <label>Ім’я клієнта<input v-model.trim="contact.full_name" :disabled="!!client" :required="!client" maxlength="150" :placeholder="client ? '' : 'Для нового клієнта'"></label>
       </div>
-      <p v-if="client" class="alert"><UserPlus :size="18"/> Клієнт знайдений: <strong>{{ client.full_name }}</strong><span v-if="client.is_guest"> · кабінет без пошти</span></p>
-      <div v-if="client?.devices.length"><strong>Пристрій клієнта</strong>
+      <p v-if="client && !client.bySerial" class="alert"><UserPlus :size="18"/> Клієнт знайдений: <strong>{{ client.full_name }}</strong><span v-if="client.is_guest"> · кабінет без пошти</span></p>
+
+      <div v-if="client?.devices.length && !client.bySerial">
+        <strong>Пристрій клієнта</strong>
         <div class="device-picks" style="margin-top:8px">
           <button v-for="item in client.devices" :key="item.id" type="button" class="device-pick" :class="{ active: pick === item.id }" @click="pick = item.id">
-            <component :is="icons[item.device_category]" :size="22"/><span><strong>{{ item.brand }} {{ item.model }}</strong><small>{{ item.serial_number || 'без серійного номера' }}</small></span>
+            <component :is="icons[item.device_category]" :size="22"/>
+            <span><strong>{{ item.brand }} {{ item.model }}</strong><small>{{ item.serial_number || 'без серійного номера' }}</small></span>
           </button>
-          <button type="button" class="device-pick" :class="{ active: pick === null }" @click="pick = null"><Plus :size="22"/><span><strong>Інший пристрій</strong><small>Новий у реєстрі</small></span></button>
+          <button type="button" class="device-pick" :class="{ active: pick === null }" @click="pick = null">
+            <Plus :size="22"/><span><strong>Інший пристрій</strong><small>Новий у реєстрі</small></span>
+          </button>
         </div>
       </div>
-      <Warranty :warranty="passport?.warranty"/>
-      <label v-if="device" class="full">Що сталося?<textarea v-model.trim="form.problem_description" required minlength="3" maxlength="4000" rows="3"></textarea></label>
-      <div v-if="device" class="hint-chips"><button v-for="text in problemHints" :key="text" type="button" class="chip-button" @click="hint(text)">{{ text }}</button></div>
-      <QuickFields v-else v-model="form" show-serial serial-label="Серійний номер (бажано внести зараз)"/>
+
+      <!-- 3. Несправність; для нового пристрою ще категорія й модель -->
+      <template v-if="device">
+        <label>Що сталося?<textarea v-model.trim="form.problem_description" required minlength="3" maxlength="4000" rows="3"></textarea></label>
+        <div class="hint-chips"><button v-for="text in problemHints" :key="text" type="button" class="chip-button" @click="hint(text)">{{ text }}</button></div>
+      </template>
+      <QuickFields v-else v-model="form"/>
+
       <fieldset v-if="!device && modelKey" class="spec-panel">
         <legend>Характеристики</legend>
         <p class="spec-source" :class="specSource || 'none'">
           <template v-if="specSource === 'preset'">Заповнено з довідника моделей. Змініть, якщо конфігурація клієнта інша.</template>
-          <template v-else-if="specSource === 'device'">Узято з такого ж пристрою, що вже був у сервісі. Перевірте — конфігурація може відрізнятися.</template>
-          <template v-else>Цієї моделі ще немає в базі. Заповніть, що відомо, — або залиште порожнім і додайте пізніше в паспорті.</template>
+          <template v-else-if="specSource === 'device'">Узято з такого ж пристрою, що вже був у сервісі. Перевірте, бо конфігурація може відрізнятися.</template>
+          <template v-else>Цієї моделі ще немає в базі. Заповніть, що відомо, або додайте пізніше в паспорті.</template>
         </p>
         <div class="form-grid">
           <label v-for="key in specFields" :key="key">{{ specLabels[key] }}<input v-model.trim="specs[key]" maxlength="160" @input="specsTouched = true"></label>
         </div>
         <label v-if="specSource !== 'preset'" class="check"><input v-model="savePreset" type="checkbox"> Зберегти модель із цими характеристиками в довідник</label>
       </fieldset>
+
+      <!-- 4. Що передав клієнт і в якому стані -->
       <div class="form-grid">
-        <label>Комплектація<input v-model.trim="extra.completeness" placeholder="Зарядка, сумка…"></label>
-        <label>Зовнішній стан<input v-model.trim="extra.cosmetic_notes" placeholder="Подряпини, потертості…"></label>
-        <label>Пріоритет<select v-model="extra.priority"><option value="normal">Звичайний</option><option value="urgent">Терміновий</option></select></label>
-        <label>Майстер<select v-model="extra.master_id"><option :value="null">Не призначати</option><option v-for="worker in masters" :key="worker.id" :value="worker.id">{{ worker.full_name }}{{ worker.active_orders != null ? ' · активних: ' + worker.active_orders : '' }}</option></select></label>
-        <DeliveryFields v-model="extra.delivery" class="full"/>
-        <label v-if="passport?.warranty" class="check full"><input v-model="extra.is_warranty_case" type="checkbox"> Гарантійний випадок</label>
+        <label>Комплектація<input v-model.trim="extra.completeness" placeholder="Зарядка, сумка"></label>
+        <label>Зовнішній стан<input v-model.trim="extra.cosmetic_notes" placeholder="Подряпини, потертості"></label>
       </div>
-      <div class="actions"><button class="button primary" :disabled="busy">{{ busy ? 'Зберігаємо…' : 'Прийняти пристрій' }}</button></div>
+
+      <!-- 5. Те, що зазвичай не змінюють -->
+      <details class="fold more-fields" :open="moreOpen || extra.delivery.method === 'nova_poshta'" @toggle="moreOpen = $event.target.open">
+        <summary>Додатково: пріоритет, майстер, спосіб отримання</summary>
+        <div class="form-grid">
+          <label>Пріоритет
+            <select v-model="extra.priority"><option value="normal">Звичайний</option><option value="urgent">Терміновий</option></select>
+          </label>
+          <label>Майстер
+            <select v-model="extra.master_id">
+              <option :value="null">Не призначати</option>
+              <option v-for="worker in masters" :key="worker.id" :value="worker.id">{{ worker.full_name }}{{ worker.active_orders != null ? ' · активних: ' + worker.active_orders : '' }}</option>
+            </select>
+          </label>
+          <DeliveryFields v-model="extra.delivery" class="full"/>
+        </div>
+      </details>
+
+      <div class="actions"><button class="button primary large" :disabled="busy">{{ busy ? 'Зберігаємо…' : 'Прийняти пристрій' }}</button></div>
     </form>
   </section>
 </template>
