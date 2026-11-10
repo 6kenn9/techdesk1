@@ -221,6 +221,11 @@ class FakeTelegram:
         self.calls = []
 
     def __call__(self, method, **params):
+        # Як справжній Telegram: кнопки-посилання на localhost відхиляються разом із повідомленням.
+        for row in (params.get("reply_markup") or {}).get("inline_keyboard", []):
+            for button in row:
+                if "url" in button and ("localhost" in button["url"] or "127.0.0.1" in button["url"]):
+                    raise RuntimeError("Telegram sendMessage: Bad Request: inline keyboard button URL is invalid")
         self.calls.append((method, params))
         return {"message_id": len(self.calls)} if method == "sendMessage" else True
 
@@ -622,7 +627,7 @@ def test_telegram_menu_and_commands(client, identities, telegram_bot):
     bot.handle_update(tg_message(7401, "🛡 Гарантія"))
     assert "Гарантія діє" in fake.sent(7401)[-1]["text"] or "Чинних гарантій" in fake.sent(7401)[-1]["text"]
     bot.handle_update(tg_message(7401, "➕ Нова заявка"))
-    assert fake.sent(7401)[-1]["reply_markup"]["inline_keyboard"][0][0]["url"].endswith("/orders/new")
+    assert "/orders/new" in fake.sent(7401)[-1]["text"]  # локальний сайт: посилання текстом, без кнопки
     bot.handle_update(tg_message(7401, "📋 Мої заявки"))
     assert "заявк" in fake.sent(7401)[-1]["text"].lower() or "заявк" in fake.sent(7401)[-2]["text"].lower()
     # Невідомий чат отримує довідку без меню.
@@ -692,3 +697,15 @@ def test_telegram_warranty_and_maintenance_reminders(client, identities, telegra
     before = len(fake.sent(7601))
     bot.send_reminders(moment)
     assert all("профілактику" not in m["text"] for m in fake.sent(7601)[before:]) and other
+
+def test_telegram_link_buttons_only_for_public_site(monkeypatch):
+    from app.services import telegram
+    monkeypatch.setattr(telegram, "PUBLIC_URL", "http://localhost:5173")
+    text, buttons = telegram.with_link("Текст", "Відкрити", "/orders")
+    assert buttons is None and "http://localhost:5173/orders" in text
+    for local in ("http://127.0.0.1:5173", "http://192.168.1.20", "http://techdesk"):
+        monkeypatch.setattr(telegram, "PUBLIC_URL", local)
+        assert telegram.with_link("Т", "В", "/")[1] is None
+    monkeypatch.setattr(telegram, "PUBLIC_URL", "https://techdesk.example.ua")
+    text, buttons = telegram.with_link("Текст", "Відкрити", "/orders")
+    assert text == "Текст" and buttons[0][0]["url"] == "https://techdesk.example.ua/orders"
