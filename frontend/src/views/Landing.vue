@@ -2,9 +2,24 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  ArrowRight, ArrowUpRight, CheckCircle2, ChevronDown, Clock, Cpu,
-  FileCheck2, Gamepad2, HardDrive, Laptop, MapPin, Monitor, Phone,
-  Search, ShieldCheck, Smartphone, Watch, Wrench
+  ArrowRight,
+  ArrowUpRight,
+  CheckCircle2,
+  ChevronDown,
+  Clock,
+  Cpu,
+  FileCheck2,
+  Gamepad2,
+  HardDrive,
+  Laptop,
+  MapPin,
+  Monitor,
+  Phone,
+  Search,
+  ShieldCheck,
+  Smartphone,
+  Watch,
+  Wrench,
 } from 'lucide-vue-next'
 import { api, query } from '../api'
 import { useSession } from '../state'
@@ -134,20 +149,31 @@ const faqs = [
 async function lookup(sampleCode) {
   if (typeof sampleCode === 'string') code.value = sampleCode
   if (!code.value.trim()) return
-  loading.value = true; error.value = ''; result.value = null
-  try { result.value = await api('/track' + query({ code: code.value.trim() })) }
-  catch (e) { error.value = e.message }
-  finally { loading.value = false }
+  loading.value = true
+  error.value = ''
+  result.value = null
+  try {
+    result.value = await api('/track' + query({ code: code.value.trim() }))
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    loading.value = false
+  }
 }
 
-onMounted(() => { if (code.value) lookup() })
+onMounted(() => {
+  if (code.value) lookup()
+})
 </script>
 
 <template>
   <div class="landing">
     <header class="public-topbar">
       <div class="wrap public-nav">
-        <RouterLink class="brand" to="/"><img src="/mark.svg" alt="" width="28" height="28">TechDesk</RouterLink>
+        <RouterLink class="brand" to="/">
+          <img src="/mark.svg" alt="" width="28" height="28" />
+          TechDesk
+        </RouterLink>
         <nav class="public-links" aria-label="Розділи сайту">
           <a href="#tracking">Перевірка заявки</a>
           <a href="#services">Послуги та ціни</a>
@@ -156,30 +182,31 @@ onMounted(() => { if (code.value) lookup() })
           <a href="#contacts">Контакти</a>
         </nav>
         <div class="actions">
-          <ThemeToggle/>
+          <ThemeToggle />
           <RouterLink v-if="!session.user" to="/quick" class="button">Швидка заявка</RouterLink>
           <RouterLink :to="session.user ? session.home : '/login'" class="button primary">
-            {{ session.user ? 'Робочий простір' : 'Увійти в кабінет' }} <ArrowUpRight :size="15"/>
+            {{ session.user ? 'Робочий простір' : 'Увійти в кабінет' }}
+            <ArrowUpRight :size="15" />
           </RouterLink>
         </div>
       </div>
     </header>
 
     <main>
-      <!-- 1. CLEAN HERO + ORDER TRACKER -->
+      <!-- 1. Перший екран і перевірка статусу заявки -->
       <section class="hero-clean wrap" aria-labelledby="portal-title">
         <div class="hero-clean-head">
           <h1 id="portal-title">Сервісний центр комп’ютерної та цифрової техніки TechDesk</h1>
           <p>
-            Ремонт і модернізація ноутбуків, ПК, смартфонів, моніторів, смарт-годинників та консолей.
-            Зберігаємо історію кожного пристрою за серійним номером і погоджуємо кошторис онлайн до початку робіт.
+            Ремонт і модернізація ноутбуків, ПК, смартфонів, моніторів, смарт-годинників та консолей. Зберігаємо історію кожного пристрою за серійним
+            номером і погоджуємо кошторис онлайн до початку робіт.
           </p>
         </div>
 
         <div id="tracking" class="card tracker-card">
           <form class="search-form" @submit.prevent="lookup()">
             <div class="input-icon">
-              <Search :size="17"/>
+              <Search :size="17" />
               <input
                 id="tracking-code"
                 v-model.trim="code"
@@ -187,7 +214,7 @@ onMounted(() => { if (code.value) lookup() })
                 placeholder="Введіть номер заявки (наприклад, TD-2026-0004) або серійний номер..."
                 required
                 maxlength="80"
-              >
+              />
             </div>
             <button class="button primary" :disabled="loading">
               {{ loading ? 'Пошук…' : 'Перевірити статус' }}
@@ -196,13 +223,7 @@ onMounted(() => { if (code.value) lookup() })
 
           <div class="tracker-samples">
             <span>Швидкий приклад:</span>
-            <button
-              v-for="ex in examples"
-              :key="ex"
-              type="button"
-              class="chip mono sample-link"
-              @click="lookup(ex)"
-            >
+            <button v-for="ex in examples" :key="ex" type="button" class="chip mono sample-link" @click="lookup(ex)">
               {{ ex }}
             </button>
           </div>
@@ -210,22 +231,37 @@ onMounted(() => { if (code.value) lookup() })
           <p v-if="error" class="error" role="alert">{{ error }}</p>
           <div v-if="result" class="tracking-result" aria-live="polite">
             <div class="section-head">
-              <h3>Статус заявки <span class="mono">{{ code }}</span></h3>
-              <Stage :status="result.status"/>
+              <h3>
+                Статус заявки
+                <span class="mono">{{ code }}</span>
+              </h3>
+              <Stage :status="result.status" />
             </div>
-            <Timeline :status="result.status"/>
+            <Timeline :status="result.status" />
           </div>
         </div>
 
         <div class="hero-highlights">
-          <div><strong>Діагностика від 1 дня</strong><span>точне виявлення несправності</span></div>
-          <div><strong>Паспорт за S/N та IMEI</strong><span>вся історія ремонтів і апгрейдів</span></div>
-          <div><strong>Онлайн-погодження</strong><span>жодних робіт без вашої згоди</span></div>
-          <div><strong>Гарантія до 180 днів</strong><span>офіційний талон та акт у PDF</span></div>
+          <div>
+            <strong>Діагностика від 1 дня</strong>
+            <span>точне виявлення несправності</span>
+          </div>
+          <div>
+            <strong>Паспорт за S/N та IMEI</strong>
+            <span>вся історія ремонтів і апгрейдів</span>
+          </div>
+          <div>
+            <strong>Онлайн-погодження</strong>
+            <span>жодних робіт без вашої згоди</span>
+          </div>
+          <div>
+            <strong>Гарантія до 180 днів</strong>
+            <span>офіційний талон та акт у PDF</span>
+          </div>
         </div>
       </section>
 
-      <!-- 2. CLEAN SERVICE TABS + PRICE TABLE -->
+      <!-- 2. Послуги та прейскурант -->
       <section id="services" class="landing-section wrap" aria-labelledby="services-title">
         <div class="landing-section-head">
           <div>
@@ -233,7 +269,8 @@ onMounted(() => { if (code.value) lookup() })
             <p>Оберіть тип пристрою, щоб переглянути основні види робіт, терміни виконання та гарантію.</p>
           </div>
           <RouterLink :to="session.user ? '/orders/new' : '/quick'" class="button">
-            Оформити заявку <ArrowRight :size="15"/>
+            Оформити заявку
+            <ArrowRight :size="15" />
           </RouterLink>
         </div>
 
@@ -248,7 +285,7 @@ onMounted(() => { if (code.value) lookup() })
             :aria-selected="activeCategory === idx"
             @click="activeCategory = idx"
           >
-            <component :is="cat.icon" :size="16"/>
+            <component :is="cat.icon" :size="16" />
             <span>{{ cat.name }}</span>
           </button>
         </div>
@@ -270,10 +307,14 @@ onMounted(() => { if (code.value) lookup() })
               </thead>
               <tbody>
                 <tr v-for="job in currentService.jobs" :key="job.title">
-                  <td><strong>{{ job.title }}</strong></td>
+                  <td>
+                    <strong>{{ job.title }}</strong>
+                  </td>
                   <td class="nowrap">{{ job.time }}</td>
                   <td class="nowrap">{{ job.warranty }}</td>
-                  <td class="align-right mono nowrap"><strong>{{ job.price }}</strong></td>
+                  <td class="align-right mono nowrap">
+                    <strong>{{ job.price }}</strong>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -281,7 +322,7 @@ onMounted(() => { if (code.value) lookup() })
         </div>
       </section>
 
-      <!-- 3. CALM 2x2 ADVANTAGES SECTION (NO CLUTTERED MINI-WINDOWS) -->
+      <!-- 3. Як ми працюємо з клієнтом -->
       <section id="advantages" class="landing-section landing-band" aria-labelledby="advantages-title">
         <div class="wrap">
           <div class="landing-section-head">
@@ -294,7 +335,7 @@ onMounted(() => { if (code.value) lookup() })
           <div class="grid-2">
             <article v-for="adv in advantages" :key="adv.title" class="card simple-feature-card">
               <div class="simple-feature-head">
-                <span class="simple-feature-icon"><component :is="adv.icon" :size="18"/></span>
+                <span class="simple-feature-icon"><component :is="adv.icon" :size="18" /></span>
                 <h3>{{ adv.title }}</h3>
               </div>
               <p>{{ adv.text }}</p>
@@ -303,7 +344,7 @@ onMounted(() => { if (code.value) lookup() })
         </div>
       </section>
 
-      <!-- 4. SIMPLE 4-STEP WORKFLOW + FAQ -->
+      <!-- 4. Етапи ремонту та часті питання -->
       <section id="workflow" class="landing-section wrap" aria-labelledby="workflow-title">
         <div class="landing-section-head">
           <div>
@@ -338,20 +379,10 @@ onMounted(() => { if (code.value) lookup() })
         <div class="faq-block">
           <h3>Часті запитання</h3>
           <div class="faq-list">
-            <div
-              v-for="(item, idx) in faqs"
-              :key="item.q"
-              class="faq-item"
-              :class="{ open: openFaq === idx }"
-            >
-              <button
-                type="button"
-                class="faq-question"
-                :aria-expanded="openFaq === idx"
-                @click="openFaq = openFaq === idx ? -1 : idx"
-              >
+            <div v-for="(item, idx) in faqs" :key="item.q" class="faq-item" :class="{ open: openFaq === idx }">
+              <button type="button" class="faq-question" :aria-expanded="openFaq === idx" @click="openFaq = openFaq === idx ? -1 : idx">
                 <span>{{ item.q }}</span>
-                <ChevronDown :size="17" class="faq-chevron"/>
+                <ChevronDown :size="17" class="faq-chevron" />
               </button>
               <div v-if="openFaq === idx" class="faq-answer">
                 <p>{{ item.a }}</p>
@@ -366,7 +397,8 @@ onMounted(() => { if (code.value) lookup() })
       <div class="wrap footer-grid">
         <div class="footer-col">
           <RouterLink class="brand footer-brand" to="/">
-            <img src="/mark.svg" alt="" width="26" height="26">TechDesk
+            <img src="/mark.svg" alt="" width="26" height="26" />
+            TechDesk
           </RouterLink>
           <p class="footer-desc">
             Сервісний центр комп’ютерної та цифрової техніки з підсистемами електронної паспортизації пристроїв та обліку ремонтних робіт.
@@ -398,10 +430,22 @@ onMounted(() => { if (code.value) lookup() })
         <div class="footer-col">
           <h3>Контакти</h3>
           <ul class="footer-contacts">
-            <li><MapPin :size="15"/> <span>м. Київ, вул. Політехнічна, 14</span></li>
-            <li><Phone :size="15"/> <span class="mono">+380 (44) 290-45-18</span></li>
-            <li><Phone :size="15"/> <span class="mono">+380 (67) 510-22-90</span></li>
-            <li><Clock :size="15"/> <span>Пн–Пт: 09:00–19:00, Сб: 10:00–17:00</span></li>
+            <li>
+              <MapPin :size="15" />
+              <span>м. Київ, вул. Політехнічна, 14</span>
+            </li>
+            <li>
+              <Phone :size="15" />
+              <span class="mono">+380 (44) 290-45-18</span>
+            </li>
+            <li>
+              <Phone :size="15" />
+              <span class="mono">+380 (67) 510-22-90</span>
+            </li>
+            <li>
+              <Clock :size="15" />
+              <span>Пн–Пт: 09:00–19:00, Сб: 10:00–17:00</span>
+            </li>
           </ul>
         </div>
       </div>

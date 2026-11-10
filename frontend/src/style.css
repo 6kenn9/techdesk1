@@ -474,10 +474,9 @@ td a { font-weight: 650; }
 .demo-master { background: var(--surface-subtle); }
 .demo-client { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok); }
 
-.kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .kpi { display: grid; align-content: space-between; gap: 9px; padding: 14px 16px; }
 .kpi-label { display: flex; align-items: center; gap: 6px; font-size: .82rem; color: var(--ink-soft); font-weight: 600; }
-.kpi-label svg { color: var(--muted); }
 .kpi strong { font: 650 1.25rem var(--mono); overflow-wrap: anywhere; }
 .chart-box { position: relative; height: 220px; }
 .chart-box.tall { height: 260px; }
@@ -489,8 +488,8 @@ td a { font-weight: 650; }
 .device-title h3 { font-size: 1rem; overflow-wrap: anywhere; }
 .device-title svg { color: var(--muted); }
 .device-preview { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(90px, 100%), 1fr)); gap: 7px; margin: 0; padding-top: 8px; border-top: 1px solid var(--border); }
-.device-preview dt, .specs dt { color: var(--muted); font-size: .77rem; }
-.device-preview dd { margin: 3px 0 0; font: 550 .75rem var(--mono); overflow-wrap: anywhere; }
+.device-preview dt, .specs dt { color: var(--muted); font-size: .82rem; }
+.device-preview dd { margin: 3px 0 0; font-size: .86rem; font-weight: 600; overflow-wrap: anywhere; }
 .device-owner { margin: 0; font-size: .86rem; }
 .specs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
 .specs div { border: 1px solid var(--border); background: var(--surface-subtle); padding: 8px; border-radius: var(--radius-sm); overflow-wrap: anywhere; }
@@ -509,7 +508,7 @@ td a { font-weight: 650; }
 .form-card { max-width: 850px; }
 
 @media (max-width: 1120px) {
-  .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .workflow-grid.workflow-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .workflow-grid.workflow-4 li:nth-child(3) { border-left: 0; }
@@ -835,3 +834,9 @@ td a { font-weight: 650; }
 .more-fields > summary { font-size: .92rem; font-weight: 600; color: var(--ink-soft); }
 label > .input-icon { display: flex; margin-top: 5px; }
 label > small { display: block; margin-top: 4px; font-weight: 400; font-size: .84rem; }
+
+/* Таблиці: застряглі заявки й критичні залишки */
+.stale-cell { color: var(--danger); font-weight: 650; }
+
+/* Аналітика */
+.rating-summary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
