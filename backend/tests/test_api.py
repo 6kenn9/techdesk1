@@ -283,8 +283,10 @@ def test_telegram_notifications_and_approval(client, identities, telegram_bot):
     bot.handle_update(tg_press(7001, approve_button["callback_data"]))
     assert ("answerCallbackQuery", {"callback_query_id": "query", "text": "Заявка не очікує нового рішення."}) in fake.calls
 
+    before = len(fake.sent(7001))
     bot.handle_update(tg_message(7001, "/orders"))
-    assert order["order_number"] in fake.sent(7001)[-1]["text"]
+    listing = fake.sent(7001)[before]  # спершу список, далі кошториси, що чекають рішення
+    assert listing["text"].startswith("Активні заявки") and order["order_number"] in listing["text"]
     assert request(client, customer, "DELETE", "/auth/telegram-link")["telegram_linked"] is False
 
 def image_bytes(size=(2400, 1200), kind="PNG"):
@@ -605,3 +607,88 @@ def test_client_changes_delivery_before_shipping(client, identities):
     request(client, admin, "POST", path+"/shipment", {"ttn": "20450000000002"}, 409)  # ще не відремонтовано
     back = request(client, customer, "PUT", path+"/delivery", {"method": "pickup", "city": "Київ", "branch": "x"})
     assert (back["delivery_method"], back["delivery_city"], back["delivery_branch"]) == ("pickup", "", "")
+
+def test_telegram_menu_and_commands(client, identities, telegram_bot):
+    bot, fake = telegram_bot
+    master, _ = identities["master"]
+    customer, _ = identities["client"]
+    link_telegram(client, bot, customer, 7401)
+    greeting = fake.sent(7401)[-1]
+    keyboard = [button["text"] for row in greeting["reply_markup"]["keyboard"] for button in row]
+    assert keyboard == ["📋 Мої заявки", "🛡 Гарантія", "➕ Нова заявка", "❓ Допомога"]
+    link_telegram(client, bot, master, 7402)
+    assert [b["text"] for row in fake.sent(7402)[-1]["reply_markup"]["keyboard"] for b in row] == ["📋 Мої заявки", "❓ Допомога"]
+    # Кнопка меню надсилає текст, який бот розуміє як команду.
+    bot.handle_update(tg_message(7401, "🛡 Гарантія"))
+    assert "Гарантія діє" in fake.sent(7401)[-1]["text"] or "Чинних гарантій" in fake.sent(7401)[-1]["text"]
+    bot.handle_update(tg_message(7401, "➕ Нова заявка"))
+    assert fake.sent(7401)[-1]["reply_markup"]["inline_keyboard"][0][0]["url"].endswith("/orders/new")
+    bot.handle_update(tg_message(7401, "📋 Мої заявки"))
+    assert "заявк" in fake.sent(7401)[-1]["text"].lower() or "заявк" in fake.sent(7401)[-2]["text"].lower()
+    # Невідомий чат отримує довідку без меню.
+    bot.handle_update(tg_message(7499, "привіт"))
+    assert "Вітаємо" in fake.sent(7499)[-1]["text"] and "reply_markup" not in fake.sent(7499)[-1]
+    bot.handle_update(tg_message(7401, "/stop"))
+    assert fake.sent(7401)[-1]["reply_markup"] == {"remove_keyboard": True}
+
+def test_telegram_estimate_term_and_pending_list(client, identities, telegram_bot):
+    bot, fake = telegram_bot
+    admin, _ = identities["admin"]
+    customer, _ = identities["client"]
+    link_telegram(client, bot, customer, 7501)
+    device = request(client, customer, "GET", "/passports")[0]
+    master_id = request(client, admin, "GET", "/users?role=master")[0]["id"]
+    path = f"/orders/{new_order(client, admin, device['id'], master_id=master_id)['id']}"
+    request(client, admin, "PATCH", path+"/status", {"status": "diagnostics"})
+    request(client, admin, "PUT", path, {"diagnostics": "Потрібна чистка."})
+    service = request(client, admin, "GET", "/warehouse/services")[0]
+    request(client, admin, "POST", path+"/works", {"service_id": service["id"]}, 201)
+    request(client, admin, "PATCH", path+"/status", {"status": "waiting_approval"})
+    assert "Орієнтовний строк" in fake.sent(7501)[-1]["text"]
+    # «Мої заявки» повторно надсилає кошторис із кнопками погодження.
+    bot.handle_update(tg_message(7501, "📋 Мої заявки"))
+    assert "inline_keyboard" in fake.sent(7501)[-1]["reply_markup"]
+    assert fake.sent(7501)[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"].startswith("ap:")
+
+def test_telegram_warranty_and_maintenance_reminders(client, identities, telegram_bot):
+    from datetime import timedelta
+    from app.core.database import SessionLocal
+    from app.models.models import Order, now
+    bot, fake = telegram_bot
+    admin, _ = identities["admin"]
+    customer, owner = identities["client"]
+    link_telegram(client, bot, customer, 7601)
+    device = request(client, admin, "POST", "/passports", {"serial_number": "test-reminders", "owner_id": owner["id"],
+                     "device_category": "Ноутбук", "brand": "Test", "model": "Нагадування"}, 201)
+    path = to_repair(client, admin, customer, device["id"], price="300.00")
+    request(client, admin, "PATCH", path+"/status", {"status": "ready_for_pickup"})
+    request(client, admin, "POST", path+"/payments", {"amount": "300.00", "method": "cash"}, 201)
+    done = request(client, admin, "PATCH", path+"/status", {"status": "completed"})
+    with SessionLocal() as db:
+        order = db.get(Order, done["id"])
+        expires = order.warranty_expires_at
+        order.created_at = order.completed_at = now() - timedelta(days=200)  # пристрій не повертався пів року
+        db.commit()
+    moment = expires - timedelta(days=3)
+    assert bot.send_reminders(expires - timedelta(days=20)) == 0 or "Гарантія на ремонт" not in fake.sent(7601)[-1]["text"]
+    bot.send_reminders(moment)
+    texts = [m["text"] for m in fake.sent(7601)]
+    assert any("Гарантія на ремонт закінчується" in t and done["order_number"] in t for t in texts)
+    before = len(fake.sent(7601))
+    bot.send_reminders(moment)  # повторно не надсилає
+    assert len(fake.sent(7601)) == before
+    with SessionLocal() as db:
+        order = db.get(Order, done["id"])
+        assert order.warranty_reminded_at is not None
+        maintenance = order.maintenance_reminded_at
+    assert maintenance is not None  # ноутбук пів року без візитів: порадили профілактику
+    assert any("планову профілактику" in t for t in texts)
+    # Якщо пристрій знову приносили після ремонту, профілактику не радимо.
+    other = to_repair(client, admin, customer, device["id"], price="100.00")
+    with SessionLocal() as db:
+        order = db.get(Order, done["id"])
+        order.maintenance_reminded_at = None
+        db.commit()
+    before = len(fake.sent(7601))
+    bot.send_reminders(moment)
+    assert all("профілактику" not in m["text"] for m in fake.sent(7601)[before:]) and other

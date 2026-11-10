@@ -99,6 +99,9 @@ class Order(Base):
     rating: Mapped[int | None] = mapped_column(SmallInteger)
     rating_comment: Mapped[str] = mapped_column(Text, default="", server_default="")
     rated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # коли бот нагадав про кінець гарантії та про профілактику (щоб не надсилати двічі)
+    warranty_reminded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    maintenance_reminded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # спосіб повернення пристрою: самовивіз або відправка Новою Поштою
     delivery_method: Mapped[str] = mapped_column(String(15), default="pickup", server_default="pickup")
     delivery_city: Mapped[str] = mapped_column(String(80), default="", server_default="")
