@@ -30,6 +30,8 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     telegram_chat_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
     telegram_link_code: Mapped[str | None] = mapped_column(String(32), unique=True)
+    # чат лишається прив'язаним, але сповіщення призупинено командою /stop
+    telegram_muted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     telegram_link_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     claim_token_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
     claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from ..core.config import DEMO_MODE
 from ..core.security import Admin, Current, Db, RateLimiter, Staff, client_ip, fail, hasher, throttle, token, verify
 from ..models.models import Order, User, now
-from ..schemas.schemas import Login, PasswordChange, Registration, StaffRegistration, UserEdit
+from ..schemas.schemas import Login, PasswordChange, Registration, StaffRegistration, TelegramNotifications, UserEdit
 from ..services.domain import ACTIVE, public_user
 
 router = APIRouter(prefix="/api")
@@ -81,6 +81,16 @@ def telegram_test(user: Current):
 @router.delete("/auth/telegram-link")
 def telegram_unlink(db: Db, user: Current):
     user.telegram_chat_id = user.telegram_link_code = user.telegram_link_expires_at = None
+    user.telegram_muted = False
+    db.commit()
+    return public_user(user)
+
+@router.put("/auth/telegram-notifications")
+def telegram_notifications(payload: TelegramNotifications, db: Db, user: Current):
+    """Увімкнути або призупинити сповіщення, не відв'язуючи чат."""
+    if user.telegram_chat_id is None:
+        fail(409, "Спершу підключіть Telegram.")
+    user.telegram_muted = not payload.enabled
     db.commit()
     return public_user(user)
 

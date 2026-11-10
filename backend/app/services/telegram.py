@@ -3,6 +3,8 @@ import logging
 import queue
 import threading
 from datetime import timedelta
+from ipaddress import ip_address
+from urllib.parse import urlsplit
 import httpx
 from fastapi import HTTPException
 from sqlalchemy import func, select
@@ -15,21 +17,42 @@ log = logging.getLogger("techdesk.telegram")
 bot = None  # екземпляр Bot, якщо задано TELEGRAM_BOT_TOKEN
 HELP = ("Кнопки меню внизу:\n📋 Мої заявки — стан ремонтів і кошториси, що чекають рішення\n"
         "🛡 Гарантія — до якої дати діє гарантія на ремонти\n➕ Нова заявка — подати заявку на ремонт\n"
-        "/stop — вимкнути сповіщення\n\n"
+        "🔕 / 🔔 — призупинити або знову увімкнути сповіщення\n\n"
         "Щоб підключити сповіщення, відкрийте TechDesk і натисніть «Підключити Telegram».")
 
 # Меню внизу чату: кнопка надсилає свій текст, а бот розуміє його як команду.
-MENU = {"📋 Мої заявки": "/orders", "🛡 Гарантія": "/warranty", "➕ Нова заявка": "/new", "❓ Допомога": "/help"}
+MUTE, UNMUTE = "🔕 Вимкнути сповіщення", "🔔 Увімкнути сповіщення"
+MENU = {"📋 Мої заявки": "/orders", "🛡 Гарантія": "/warranty", "➕ Нова заявка": "/new", "❓ Допомога": "/help",
+        MUTE: "/stop", UNMUTE: "/resume"}
 COMMANDS = [("orders", "Мої заявки"), ("warranty", "Гарантія на ремонти"), ("new", "Нова заявка"),
-            ("help", "Допомога"), ("stop", "Вимкнути сповіщення")]
+            ("help", "Допомога"), ("stop", "Вимкнути сповіщення"), ("resume", "Увімкнути сповіщення")]
 WARRANTY_NOTICE_DAYS = 7     # за скільки днів попереджати про кінець гарантії
 MAINTENANCE_AFTER_DAYS = 180  # через скільки днів після ремонту радити профілактику
 MAINTENANCE_CATEGORIES = ("Ноутбук", "ПК", "Моноблок", "Міні-ПК", "Консоль")
 
-def menu(role):
-    """Клавіатура внизу чату; працівникам гарантія й нова заявка не потрібні."""
+def menu(role, muted=False):
+    """Клавіатура внизу чату; працівникам гарантія й нова заявка не потрібні. Остання кнопка перемикає сповіщення."""
     rows = [["📋 Мої заявки", "🛡 Гарантія"], ["➕ Нова заявка", "❓ Допомога"]] if role == "client" else [["📋 Мої заявки", "❓ Допомога"]]
+    rows.append([UNMUTE if muted else MUTE])
     return {"keyboard": [[{"text": text} for text in row] for row in rows], "resize_keyboard": True, "is_persistent": True}
+
+def public_site():
+    """Telegram відхиляє кнопки-посилання на localhost і внутрішні IP, тож для них кнопок не робимо."""
+    host = urlsplit(PUBLIC_URL).hostname or ""
+    if host == "localhost" or "." not in host:
+        return False
+    try:
+        address = ip_address(host)
+        return not (address.is_private or address.is_loopback)
+    except ValueError:
+        return True
+
+def with_link(text, label, path):
+    """Повертає (текст, кнопки): кнопка для публічного сайту, інакше посилання в тексті."""
+    url = f"{PUBLIC_URL}{path}"
+    if public_site():
+        return text, [[{"text": label, "url": url}]]
+    return f"{text}\n\n{label}: {url}", None
 
 def date_text(value):
     return domain.local_date(value).strftime("%d.%m.%Y")
@@ -55,7 +78,7 @@ class TelegramApi:
 
 def recipient(db, user_id, text, buttons=None):
     user = db.get(User, user_id) if user_id else None
-    if user and user.is_active and user.telegram_chat_id:
+    if user and user.is_active and user.telegram_chat_id and not user.telegram_muted:
         return [(user.telegram_chat_id, text, buttons)]
     return []
 
@@ -128,7 +151,7 @@ def due_reminders(db, moment=None):
     """
     moment = moment or now()
     result = []
-    linked = select(User.id).where(User.telegram_chat_id.is_not(None), User.is_active)
+    linked = select(User.id).where(User.telegram_chat_id.is_not(None), User.is_active, User.telegram_muted.is_(False))
     soon = select(Order).where(Order.status == "completed", Order.warranty_reminded_at.is_(None), Order.client_id.in_(linked),
                                Order.warranty_expires_at > moment,
                                Order.warranty_expires_at <= moment + timedelta(days=WARRANTY_NOTICE_DAYS))
@@ -137,7 +160,7 @@ def due_reminders(db, moment=None):
         left = max(1, (order.warranty_expires_at - moment).days)
         text = (f"🛡 Гарантія на ремонт закінчується {date_text(order.warranty_expires_at)}\n{order.order_number} · {device.brand} {device.model}\n\n"
                 f"Залишилось днів: {left}. Якщо помітили проблему, пов'язану з цим ремонтом, зверніться до цієї дати: гарантійний ремонт безкоштовний.")
-        result.append((order, "warranty", client.telegram_chat_id, text, [[{"text": "Подати гарантійну заявку", "url": f"{PUBLIC_URL}/orders/new"}]]))
+        result.append((order, "warranty", client.telegram_chat_id, *with_link(text, "Подати гарантійну заявку", "/orders/new")))
     # Профілактика: лише останній ремонт пристрою, щоб не радити чистку, якщо пристрій уже знову був у сервісі.
     old = (select(Order).join(Device, Device.id == Order.device_id)
            .where(Order.status == "completed", Order.maintenance_reminded_at.is_(None), Order.client_id.in_(linked),
@@ -151,7 +174,7 @@ def due_reminders(db, moment=None):
         text = (f"🧹 Час на планову профілактику\n{device.brand} {device.model}\n\n"
                 f"Минуло пів року після ремонту {order.order_number}. Радимо почистити пристрій від пилу й замінити термопасту: "
                 "так він менше грітиметься і прослужить довше.")
-        result.append((order, "maintenance", client.telegram_chat_id, text, [[{"text": "Записатися на профілактику", "url": f"{PUBLIC_URL}/orders/new"}]]))
+        result.append((order, "maintenance", client.telegram_chat_id, *with_link(text, "Записатися на профілактику", "/orders/new")))
     return result
 
 class Bot:
@@ -243,6 +266,12 @@ class Bot:
                 self._message(update["message"])
         except Exception:
             log.exception("Помилка обробки оновлення Telegram")
+            chat_id = (update.get("message") or {}).get("chat", {}).get("id")
+            if chat_id:  # користувач має знати, що запит не виконано, а не чекати відповіді
+                try:
+                    self.send(chat_id, "Не вдалося виконати команду. Спробуйте ще раз трохи пізніше.")
+                except Exception:
+                    pass
 
     def _message(self, message):
         chat = message.get("chat", {})
@@ -252,31 +281,43 @@ class Bot:
         text = MENU.get(text, text)
         command, _, argument = text.partition(" ")
         command = command.split("@")[0]
-        role = self._role(chat_id)
+        role, muted = self._account(chat_id)
+        keyboard = menu(role, muted) if role else None
         if command == "/start" and argument.strip():
             reply, role = self._link(chat_id, argument.strip())
             self.send(chat_id, reply, keyboard=menu(role) if role else None)
         elif command == "/orders":
             self._orders(chat_id)
         elif command == "/warranty":
-            self.send(chat_id, self._warranty(chat_id), keyboard=menu(role) if role else None)
+            self.send(chat_id, self._warranty(chat_id), keyboard=keyboard)
         elif command == "/new":
-            self.send(chat_id, "Опишіть несправність на сайті, і ми зареєструємо заявку. Пристрій можна принести або надіслати Новою Поштою.",
-                      [[{"text": "Подати заявку", "url": f"{PUBLIC_URL}/orders/new" if role else f"{PUBLIC_URL}/quick"}]])
-        elif command == "/stop":
-            with SessionLocal() as db:
-                user = db.scalar(select(User).where(User.telegram_chat_id == chat_id))
-                if user:
-                    user.telegram_chat_id = None
-                    db.commit()
-            self.send(chat_id, "Сповіщення вимкнено. Підключити знову можна в кабінеті TechDesk.", keyboard={"remove_keyboard": True})
+            self.send(chat_id, *with_link("Опишіть несправність на сайті, і ми зареєструємо заявку. Пристрій можна принести або надіслати Новою Поштою.",
+                                          "Подати заявку", "/orders/new" if role else "/quick"))
+        elif command in ("/stop", "/resume"):
+            self._mute(chat_id, command == "/stop")
         else:
-            self.send(chat_id, "Вітаємо в TechDesk!\n\n" + HELP, keyboard=menu(role) if role else None)
+            self.send(chat_id, "Вітаємо в TechDesk!\n\n" + HELP, keyboard=keyboard)
 
-    def _role(self, chat_id):
+    def _account(self, chat_id):
+        """Роль і стан сповіщень користувача, прив'язаного до чату; (None, False), якщо чат не підключено."""
         with SessionLocal() as db:
             user = db.scalar(select(User).where(User.telegram_chat_id == chat_id, User.is_active))
-            return user.role if user else None
+            return (user.role, user.telegram_muted) if user else (None, False)
+
+    def _mute(self, chat_id, muted):
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.telegram_chat_id == chat_id, User.is_active))
+            if not user:
+                return self.send(chat_id, "Обліковий запис не підключено. " + HELP.split("\n\n")[1])
+            user.telegram_muted = muted
+            db.commit()
+            role = user.role
+        if muted:
+            text = ("Сповіщення призупинено. Команди меню працюють як і раніше.\n"
+                    f"Щоб знову отримувати повідомлення, натисніть «{UNMUTE}».")
+        else:
+            text = "Сповіщення увімкнено. Сюди знову надходитимуть повідомлення про ваші заявки."
+        self.send(chat_id, text, keyboard=menu(role, muted))
 
     def _link(self, chat_id, code):
         with SessionLocal() as db:
@@ -288,6 +329,7 @@ class Bot:
                 previous.telegram_chat_id = None
                 db.flush()
             user.telegram_chat_id = chat_id
+            user.telegram_muted = False
             user.telegram_link_code = user.telegram_link_expires_at = None
             db.commit()
             return (f"Готово, {user.full_name}! Сюди надходитимуть сповіщення про ваші заявки.\n\n"
@@ -310,8 +352,8 @@ class Bot:
                 lines.append(f"• {order.order_number} · {device.brand} {device.model} — {domain.LABELS[order.status]}")
                 if user.role == "client" and order.status == "waiting_approval" and order.client_approval_status == "pending":
                     pending.append(status_text(db, order, f"{order.order_number} · {device.brand} {device.model}"))
-            self.send(chat_id, "Активні заявки:\n" + "\n".join(lines) if lines else "Активних заявок немає.",
-                      [[{"text": "Відкрити кабінет", "url": f"{PUBLIC_URL}/{'my-cabinet' if user.role == 'client' else 'orders'}"}]])
+            self.send(chat_id, *with_link("Активні заявки:\n" + "\n".join(lines) if lines else "Активних заявок немає.",
+                                          "Відкрити кабінет", "/my-cabinet" if user.role == "client" else "/orders"))
         for text, buttons in pending:
             self.send(chat_id, text, buttons)
 

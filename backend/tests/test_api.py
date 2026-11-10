@@ -620,9 +620,9 @@ def test_telegram_menu_and_commands(client, identities, telegram_bot):
     link_telegram(client, bot, customer, 7401)
     greeting = fake.sent(7401)[-1]
     keyboard = [button["text"] for row in greeting["reply_markup"]["keyboard"] for button in row]
-    assert keyboard == ["📋 Мої заявки", "🛡 Гарантія", "➕ Нова заявка", "❓ Допомога"]
+    assert keyboard == ["📋 Мої заявки", "🛡 Гарантія", "➕ Нова заявка", "❓ Допомога", "🔕 Вимкнути сповіщення"]
     link_telegram(client, bot, master, 7402)
-    assert [b["text"] for row in fake.sent(7402)[-1]["reply_markup"]["keyboard"] for b in row] == ["📋 Мої заявки", "❓ Допомога"]
+    assert [b["text"] for row in fake.sent(7402)[-1]["reply_markup"]["keyboard"] for b in row] == ["📋 Мої заявки", "❓ Допомога", "🔕 Вимкнути сповіщення"]
     # Кнопка меню надсилає текст, який бот розуміє як команду.
     bot.handle_update(tg_message(7401, "🛡 Гарантія"))
     assert "Гарантія діє" in fake.sent(7401)[-1]["text"] or "Чинних гарантій" in fake.sent(7401)[-1]["text"]
@@ -633,8 +633,35 @@ def test_telegram_menu_and_commands(client, identities, telegram_bot):
     # Невідомий чат отримує довідку без меню.
     bot.handle_update(tg_message(7499, "привіт"))
     assert "Вітаємо" in fake.sent(7499)[-1]["text"] and "reply_markup" not in fake.sent(7499)[-1]
-    bot.handle_update(tg_message(7401, "/stop"))
-    assert fake.sent(7401)[-1]["reply_markup"] == {"remove_keyboard": True}
+
+def test_telegram_mute_and_resume(client, identities, telegram_bot):
+    bot, fake = telegram_bot
+    admin, _ = identities["admin"]
+    customer, _ = identities["client"]
+    link_telegram(client, bot, customer, 7701)
+    device = request(client, customer, "GET", "/passports")[0]
+    bot.handle_update(tg_message(7701, "🔕 Вимкнути сповіщення"))
+    reply = fake.sent(7701)[-1]
+    assert "призупинено" in reply["text"]
+    assert reply["reply_markup"]["keyboard"][-1][0]["text"] == "🔔 Увімкнути сповіщення"
+    me = request(client, customer, "GET", "/auth/me")
+    assert me["telegram_linked"] is True and me["telegram_muted"] is True  # чат не відв'язано
+    before = len(fake.sent(7701))
+    order = new_order(client, admin, device["id"])
+    assert len(fake.sent(7701)) == before  # під час паузи сповіщення не надходять
+    bot.handle_update(tg_message(7701, "📋 Мої заявки"))  # команди меню працюють і під час паузи
+    assert order["order_number"] in fake.sent(7701)[before]["text"]
+    bot.handle_update(tg_message(7701, "🔔 Увімкнути сповіщення"))
+    assert "увімкнено" in fake.sent(7701)[-1]["text"]
+    assert fake.sent(7701)[-1]["reply_markup"]["keyboard"][-1][0]["text"] == "🔕 Вимкнути сповіщення"
+    request(client, admin, "PUT", f"/orders/{order['id']}", {"master_id": request(client, admin, "GET", "/users?role=master")[0]["id"]})
+    request(client, admin, "PATCH", f"/orders/{order['id']}/status", {"status": "diagnostics"})
+    assert "діагностиці" in fake.sent(7701)[-1]["text"]
+    # Те саме із сайту
+    assert request(client, customer, "PUT", "/auth/telegram-notifications", {"enabled": False})["telegram_muted"] is True
+    assert request(client, customer, "PUT", "/auth/telegram-notifications", {"enabled": True})["telegram_muted"] is False
+    request(client, customer, "DELETE", "/auth/telegram-link")
+    request(client, customer, "PUT", "/auth/telegram-notifications", {"enabled": True}, 409)
 
 def test_telegram_estimate_term_and_pending_list(client, identities, telegram_bot):
     bot, fake = telegram_bot

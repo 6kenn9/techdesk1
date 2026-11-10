@@ -117,6 +117,9 @@ class Shipment(Input):
     def digits_only(cls, value):
         return re.sub(r"\s", "", value) if isinstance(value, str) else value
 
+class TelegramNotifications(Input):
+    enabled: bool
+
 class RatingInput(Input):
     rating: int = Field(ge=1, le=5)
     comment: str = Field(default="", max_length=1000)
