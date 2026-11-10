@@ -1,4 +1,6 @@
 :root {
+  /* Без цього браузер малює кнопки й поля за темою Windows: у світлій темі сайту текст ставав білим. */
+  color-scheme: light;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   color: var(--ink);
   background: var(--bg);
@@ -63,7 +65,7 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; line-height: 1.5; -webkit-font-smoothing: antialiased; transition: background-color .2s, color .2s; }
-button, input, textarea, select { font: inherit; }
+button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .58; }
 a { color: var(--accent); text-decoration: none; }
@@ -737,7 +739,7 @@ td a { font-weight: 650; }
 .quick-chip.selected span { background: var(--accent); color: var(--on-accent); }
 /* Сповіщення працівника */
 .bell { position: relative; }
-.bell-badge { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--danger); color: #fff; font-size: .7rem; font-weight: 700; display: grid; place-items: center; line-height: 1; }
+.bell-badge { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--danger); color: var(--surface); font-size: .75rem; font-weight: 700; display: grid; place-items: center; line-height: 1; }
 .bell-panel { position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; width: min(380px, calc(100vw - 24px)); max-height: 70vh; overflow: auto; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow-md); padding: 6px; }
 .bell-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; }
 .bell-head .link-button { display: inline-flex; align-items: center; gap: 4px; }
