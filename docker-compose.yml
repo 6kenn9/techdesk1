@@ -21,6 +21,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:-}
       DEMO_MODE: ${DEMO_MODE:-true}
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:5173}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
     depends_on:
       db:
         condition: service_healthy

@@ -1,11 +1,15 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, File, Form, Query, Response, UploadFile
+from sqlalchemy import func
 from sqlalchemy import or_, select
 from ..core.security import Admin, Current, Db, Staff, fail
-from ..models.models import Device, ModelPreset, User
+from ..models.models import Device, DevicePhoto, ModelPreset, Order, User
 from ..schemas.schemas import Defect, DeviceCreate, Hardware, PresetCreate, Upgrade
 from ..services.domain import access_device, access_order, add_preset, change_spec, passport, row
 
+from ..services.photos import MAX_PER_DEVICE, MAX_UPLOAD_BYTES, normalize
+
 router = APIRouter(prefix="/api/passports")
+photos = APIRouter(prefix="/api/photos")
 
 @router.get("")
 def list_passports(db: Db, user: Current, q: str = Query("", max_length=160), category: str = ""):
@@ -89,3 +93,58 @@ def add_defect(device_id: int, payload: Defect, db: Db, user: Staff):
     device.known_defects_history = [*device.known_defects_history, payload.description]
     db.commit()
     return passport(db, device, user, True)
+
+def photo_info(db, photo):
+    order = db.get(Order, photo.order_id) if photo.order_id else None
+    return {"id": photo.id, "device_id": photo.device_id, "order_id": photo.order_id,
+            "order_number": order.order_number if order else None, "caption": photo.caption,
+            "width": photo.width, "height": photo.height, "size_bytes": photo.size_bytes,
+            "created_at": photo.created_at, "uploaded_by_id": photo.uploaded_by_id,
+            "uploaded_by": db.get(User, photo.uploaded_by_id).full_name}
+
+@router.get("/{device_id}/photos")
+def list_photos(device_id: int, db: Db, user: Current, order_id: int | None = None):
+    access_device(db, device_id, user)
+    query = select(DevicePhoto).where(DevicePhoto.device_id == device_id)
+    if order_id:
+        query = query.where(DevicePhoto.order_id == order_id)
+    return [photo_info(db, photo) for photo in db.scalars(query.order_by(DevicePhoto.created_at.desc(), DevicePhoto.id.desc()))]
+
+@router.post("/{device_id}/photos", status_code=201)
+def upload_photo(device_id: int, db: Db, user: Staff, file: UploadFile = File(...),
+                 caption: str = Form("", max_length=200), order_id: int | None = Form(None)):
+    access_device(db, device_id, user)
+    if order_id:
+        order = access_order(db, order_id, user, write=True)
+        if order.device_id != device_id:
+            fail(422, "Заявка стосується іншого пристрою.")
+    if db.scalar(select(func.count(DevicePhoto.id)).where(DevicePhoto.device_id == device_id)) >= MAX_PER_DEVICE:
+        fail(409, f"Для пристрою можна зберегти до {MAX_PER_DEVICE} фото.")
+    data = file.file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        fail(413, "Фото завелике: максимум 10 МБ.")
+    content, width, height = normalize(data)
+    photo = DevicePhoto(device_id=device_id, order_id=order_id, uploaded_by_id=user.id, caption=caption.strip(),
+                        content=content, width=width, height=height, size_bytes=len(content))
+    db.add(photo)
+    db.commit()
+    return photo_info(db, photo)
+
+@photos.get("/{photo_id}")
+def photo_file(photo_id: int, db: Db, user: Current):
+    photo = db.get(DevicePhoto, photo_id)
+    if not photo:
+        fail(404, "Фото не знайдено.")
+    access_device(db, photo.device_id, user)
+    return Response(photo.content, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+@photos.delete("/{photo_id}")
+def delete_photo(photo_id: int, db: Db, user: Staff):
+    photo = db.get(DevicePhoto, photo_id)
+    if not photo:
+        fail(404, "Фото не знайдено.")
+    if user.role != "admin" and photo.uploaded_by_id != user.id:
+        fail(403, "Видалити фото може автор або адміністратор.")
+    db.delete(photo)
+    db.commit()
+    return {"deleted": photo_id}

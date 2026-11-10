@@ -12,3 +12,5 @@ qrcode[pil]>=8,<9
 pytest>=8,<10
 httpx>=0.28,<1
 tzdata>=2025.1,<2027
+python-multipart>=0.0.18,<1
+pillow>=10.4,<13

@@ -1,12 +1,17 @@
-from fastapi import APIRouter
+import secrets
+from datetime import timedelta
+from fastapi import APIRouter, Request
 from sqlalchemy import func, select
 from ..core.config import DEMO_MODE
-from ..core.security import Admin, Current, Db, Staff, fail, hasher, token, verify
-from ..models.models import Order, User
-from ..schemas.schemas import Login, Registration, StaffRegistration, UserEdit
+from ..core.security import Admin, Current, Db, RateLimiter, Staff, client_ip, fail, hasher, throttle, token, verify
+from ..models.models import Order, User, now
+from ..schemas.schemas import Login, PasswordChange, Registration, StaffRegistration, UserEdit
 from ..services.domain import ACTIVE, public_user
 
 router = APIRouter(prefix="/api")
+login_failures = RateLimiter(limit=5, window=300)
+registrations = RateLimiter(limit=10, window=3600)
+password_changes = RateLimiter(limit=10, window=900)
 
 def create_account(db, payload, role="client", specialization=""):
     email = payload.email.lower()
@@ -20,22 +25,63 @@ def create_account(db, payload, role="client", specialization=""):
 
 @router.get("/auth/options")
 def auth_options():
-    return {"demo_mode": DEMO_MODE}
+    from ..services import telegram
+    return {"demo_mode": DEMO_MODE, "telegram": telegram.bot is not None}
 
-@router.post("/auth/register", status_code=201)
+@router.post("/auth/register", status_code=201, dependencies=[throttle(registrations, "register")])
 def register(payload: Registration, db: Db):
     user = create_account(db, payload)
     return {"access_token": token(user), "user": public_user(user)}
 
 @router.post("/auth/login")
-def login(payload: Login, db: Db):
+def login(payload: Login, db: Db, request: Request):
+    key = (client_ip(request), payload.email.lower())
+    if login_failures.blocked(key):
+        fail(429, "Забагато невдалих спроб входу. Спробуйте через 5 хвилин.")
     user = db.scalar(select(User).where(User.email == payload.email.lower()))
     if not user or not user.is_active or not verify(payload.password, user.password_hash):
+        login_failures.hit(key)
         fail(401, "Неправильна електронна пошта або пароль.")
+    login_failures.reset(key)
     return {"access_token": token(user), "user": public_user(user)}
 
 @router.get("/auth/me")
 def me(user: Current):
+    return public_user(user)
+
+@router.post("/auth/telegram-link")
+def telegram_link(db: Db, user: Current):
+    from ..services import telegram
+    if not telegram.bot:
+        fail(503, "Telegram-бот не налаштовано на сервері.")
+    user.telegram_link_code = secrets.token_urlsafe(16)
+    user.telegram_link_expires_at = now() + timedelta(minutes=15)
+    db.commit()
+    return {"url": f"https://t.me/{telegram.bot.username}?start={user.telegram_link_code}", "expires_in": 900}
+
+ROLE_NAMES = {"client": "клієнт", "master": "майстер", "admin": "адміністратор"}
+
+@router.post("/auth/telegram-test")
+def telegram_test(user: Current):
+    """Тестове повідомлення: показує, до якого облікового запису прив’язано цей чат."""
+    from ..services import telegram
+    if not telegram.bot:
+        fail(503, "Telegram-бот не налаштовано на сервері.")
+    if user.telegram_chat_id is None:
+        fail(409, "Спершу підключіть Telegram.")
+    contact = user.email or user.phone
+    try:
+        telegram.bot.send(user.telegram_chat_id,
+                          f"Тестове сповіщення TechDesk.\nОбліковий запис: {user.full_name} ({ROLE_NAMES[user.role]}), {contact}.\n"
+                          "Сповіщення для цього облікового запису надходитимуть саме в цей чат.")
+    except Exception:
+        fail(502, "Telegram не прийняв повідомлення. Можливо, ви заблокували бота — підключіть його знову.")
+    return {"sent": True}
+
+@router.delete("/auth/telegram-link")
+def telegram_unlink(db: Db, user: Current):
+    user.telegram_chat_id = user.telegram_link_code = user.telegram_link_expires_at = None
+    db.commit()
     return public_user(user)
 
 @router.get("/users")
@@ -64,3 +110,39 @@ def edit_user(user_id: int, payload: UserEdit, db: Db, user: Admin):
     target.specialization = payload.specialization
     db.commit()
     return public_user(target)
+
+@router.post("/auth/password", dependencies=[throttle(password_changes, "password")])
+def change_password(payload: PasswordChange, db: Db, user: Current):
+    """Зміна власного пароля. Інші сеанси користувача завершуються, поточний отримує новий токен."""
+    if user.email is None:
+        fail(409, "Спершу завершіть реєстрацію: вкажіть пошту й пароль у кабінеті.")
+    if not verify(payload.current_password, user.password_hash):
+        fail(400, "Поточний пароль указано неправильно.")
+    if payload.new_password == payload.current_password:
+        fail(422, "Новий пароль має відрізнятися від поточного.")
+    user.password_hash = hasher.hash(payload.new_password)
+    user.token_version = (user.token_version or 0) + 1
+    user.must_change_password = False
+    db.commit()
+    return {"access_token": token(user), "user": public_user(user)}
+
+def temporary_password():
+    alphabet = "abcdefghjkmnpqrstuvwxyz23456789"  # без схожих символів l/1, o/0
+    return "-".join("".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(3))
+
+@router.post("/users/{user_id}/reset-password")
+def reset_password(user_id: int, db: Db, admin: Admin):
+    """Адміністратор видає тимчасовий пароль; усі сеанси користувача завершуються."""
+    target = db.get(User, user_id)
+    if not target:
+        fail(404, "Користувача не знайдено.")
+    if target.id == admin.id:
+        fail(409, "Власний пароль змініть у профілі.")
+    if target.email is None:
+        fail(409, "Гостьовий кабінет не має пароля: клієнт входить за особистим посиланням.")
+    password = temporary_password()
+    target.password_hash = hasher.hash(password)
+    target.token_version = (target.token_version or 0) + 1
+    target.must_change_password = True
+    db.commit()
+    return {"temporary_password": password, "user": public_user(target)}

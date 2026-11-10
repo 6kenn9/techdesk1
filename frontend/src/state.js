@@ -4,7 +4,7 @@ import { api } from './api'
 export const useSession = defineStore('session', {
   state: () => ({ user: null, loaded: false, notice: '', noticeType: 'success', filters: {} }),
   getters: {
-    home: state => state.user?.role === 'admin' ? '/analytics' : state.user?.role === 'master' ? '/orders' : '/my-cabinet',
+    home: state => state.user?.role === 'admin' ? '/analytics' : state.user?.role === 'master' ? '/my-day' : '/my-cabinet',
     staff: state => ['admin', 'master'].includes(state.user?.role),
     admin: state => state.user?.role === 'admin',
   },

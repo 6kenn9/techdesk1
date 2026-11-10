@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from decimal import Decimal
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, JSON, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import false, BigInteger, Boolean, SmallInteger, CheckConstraint, DateTime, ForeignKey, Integer, JSON, LargeBinary, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from ..core.database import Base
@@ -22,12 +22,20 @@ class User(Base):
     __table_args__ = (CheckConstraint("role IN ('client','master','admin')", name="valid_role"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     full_name: Mapped[str] = mapped_column(String(150))
-    email: Mapped[str] = mapped_column(String(254), unique=True)
+    email: Mapped[str | None] = mapped_column(String(254), unique=True)
     phone: Mapped[str] = mapped_column(String(24), unique=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(10), default="client")
     specialization: Mapped[str] = mapped_column(String(180), default="")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    telegram_chat_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
+    telegram_link_code: Mapped[str | None] = mapped_column(String(32), unique=True)
+    telegram_link_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claim_token_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
+    claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # зміна пароля збільшує версію, і всі раніше видані токени входу стають недійсними
+    token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_at: Mapped[datetime] = timestamp()
 
 class ModelPreset(Base):
@@ -44,7 +52,7 @@ class ModelPreset(Base):
 class Device(Base):
     __tablename__ = "devices"
     id: Mapped[int] = mapped_column(primary_key=True)
-    serial_number: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    serial_number: Mapped[str | None] = mapped_column(String(80), unique=True, index=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     device_category: Mapped[str] = mapped_column(String(40))
     brand: Mapped[str] = mapped_column(String(80))
@@ -61,6 +69,8 @@ class Order(Base):
         CheckConstraint("status IN ('registered','diagnostics','waiting_approval','in_repair','ready_for_pickup','completed','cancelled')", name="valid_status"),
         CheckConstraint("client_approval_status IN ('pending','approved','rejected')", name="valid_approval"),
         CheckConstraint("warranty_days >= 0 AND paid_amount >= 0", name="valid_order_amounts"),
+        CheckConstraint("rating IS NULL OR rating BETWEEN 1 AND 5", name="valid_rating"),
+        CheckConstraint("delivery_method IN ('pickup', 'nova_poshta')", name="valid_delivery"),
     )
     id: Mapped[int] = mapped_column(primary_key=True)
     order_number: Mapped[str] = mapped_column(String(32), unique=True)
@@ -85,6 +95,15 @@ class Order(Base):
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     warranty_days: Mapped[int] = mapped_column(default=90)
     warranty_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # оцінка клієнта після завершення ремонту
+    rating: Mapped[int | None] = mapped_column(SmallInteger)
+    rating_comment: Mapped[str] = mapped_column(Text, default="", server_default="")
+    rated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # спосіб повернення пристрою: самовивіз або відправка Новою Поштою
+    delivery_method: Mapped[str] = mapped_column(String(15), default="pickup", server_default="pickup")
+    delivery_city: Mapped[str] = mapped_column(String(80), default="", server_default="")
+    delivery_branch: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    delivery_ttn: Mapped[str | None] = mapped_column(String(14))
     created_at: Mapped[datetime] = timestamp()
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
@@ -176,3 +195,40 @@ class Movement(Base):
     stock_after: Mapped[int]
     reason: Mapped[str] = mapped_column(String(180))
     created_at: Mapped[datetime] = timestamp()
+
+class DevicePhoto(Base):
+    __tablename__ = "device_photos"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), index=True)
+    order_id: Mapped[int | None] = mapped_column(ForeignKey("repair_orders.id"), index=True)
+    uploaded_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    caption: Mapped[str] = mapped_column(String(200), default="")
+    content: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    width: Mapped[int] = mapped_column(Integer)
+    height: Mapped[int] = mapped_column(Integer)
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = timestamp()
+
+class Payment(Base):
+    """Окрема оплата за заявкою: можна прийняти частину готівкою, а решту карткою."""
+    __tablename__ = "payments"
+    __table_args__ = (CheckConstraint("amount > 0", name="positive_payment"),
+                      CheckConstraint("method IN ('cash', 'card', 'transfer')", name="valid_payment_method"))
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("repair_orders.id"), index=True)
+    amount: Mapped[Decimal] = money()
+    method: Mapped[str] = mapped_column(String(10))
+    note: Mapped[str] = mapped_column(String(200), default="")
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = timestamp()
+
+class Notification(Base):
+    """Сповіщення працівника на сайті (дзвіночок у верхньому рядку)."""
+    __tablename__ = "notifications"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    order_id: Mapped[int | None] = mapped_column(ForeignKey("repair_orders.id"))
+    kind: Mapped[str] = mapped_column(String(20))
+    text: Mapped[str] = mapped_column(String(300))
+    created_at: Mapped[datetime] = timestamp()
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -46,6 +46,10 @@ SERVICES = [
     ("Відновлення після залиття", 1400), ("Діагностика ігрової консолі", 600), ("Відновлення даних", 1200),
 ]
 
+# демонстраційні оцінки клієнтів для завершених заявок (ключ — індекс пристрою)
+REVIEWS = {0: (5, "Швидко додали пам’ять, ноутбук літає."), 1: (4, "Добре, але чекав на дзвінок довше, ніж обіцяли."),
+           4: (5, "")}
+
 def seed(db):
     if db.bind.dialect.name == "postgresql":
         db.execute(text("SELECT pg_advisory_xact_lock(673229)"))
@@ -132,6 +136,11 @@ def seed(db):
             order.warranty_expires_at = order.completed_at + timedelta(days=90)
             order.paid_amount = order.total_cost
             device.known_defects_history = [*device.known_defects_history, description]
+            score, remark = REVIEWS[device_index]
+            order.rating, order.rating_comment = score, remark
+            order.rated_at = order.completed_at + timedelta(hours=5)
+        if stage == "ready_for_pickup":
+            order.delivery_method, order.delivery_city, order.delivery_branch = "nova_poshta", "Львів", "Відділення №12"
         for step in range(1, STAGES.index(stage) + 1):
             db.add(StatusHistory(order_id=order.id, changed_by_id=order.master_id or users[0].id,
                                  old_status=STAGES[step-1], new_status=STAGES[step],

@@ -46,8 +46,8 @@ async function save() {
 }
 </script>
 <template>
-  <div class="page-head"><div><div class="eyebrow">РЕЄСТР ТЕХНІКИ</div><h1>Паспорти пристроїв</h1><p>Характеристики, дефекти та історія ремонтів за серійним номером.</p></div>
-    <button v-if="session.staff" class="button primary" @click="create"><Plus :size="18"/> Новий паспорт</button></div>
+  <div class="page-head"><div class="page-title"><h1>Паспорти пристроїв</h1><span class="count">{{ items.length }}</span></div>
+    <button v-if="session.staff" class="button primary" @click="create"><Plus :size="16"/> Новий паспорт</button></div>
   <label class="input-icon" style="margin-bottom:14px"><Search :size="20"/><input v-model.trim="filters.q" aria-label="Пошук паспортів" placeholder="Серійний номер, модель, клієнт або телефон"></label>
   <div class="pills"><button class="pill" :class="{active:!filters.category}" @click="filters.category=''">Усі категорії</button>
     <button v-for="item in categories" :key="item" class="pill" :class="{active:filters.category===item}" @click="filters.category=item">{{ item }}</button></div>

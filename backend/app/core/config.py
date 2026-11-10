@@ -9,3 +9,5 @@ JWT_SECRET = os.getenv("JWT_SECRET") or ("techdesk-local-demo-key-change-me-32-c
 if len(JWT_SECRET) < 32:
     raise RuntimeError("JWT_SECRET має містити щонайменше 32 символи")
 PUBLIC_URL = os.getenv("PUBLIC_URL", "http://localhost:5173").rstrip("/")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@")

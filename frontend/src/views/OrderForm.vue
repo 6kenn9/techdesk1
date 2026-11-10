@@ -1,119 +1,57 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, ArrowRight, ScanLine } from 'lucide-vue-next'
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { ArrowLeft, Plus } from 'lucide-vue-next'
 import { api } from '../api'
+import { devicePayload, emptyQuick, icons } from '../domain'
 import { useSession } from '../state'
-import PassportFields from '../components/PassportFields.vue'
-import Warranty from '../components/Warranty.vue'
-import Modal from '../components/Modal.vue'
+import QuickFields from '../components/QuickFields.vue'
+import DeliveryFields from '../components/DeliveryFields.vue'
 
-const session=useSession(), route=useRoute(), router=useRouter()
-const staff=computed(()=>session.staff)
-const step=ref(staff.value ? 1 : 2)
-const clients=ref([]), masters=ref([]), devices=ref([]), owner=ref(''), device=ref(null), deviceId=ref('')
-const serial=ref(route.query.serial || ''), newDevice=ref(false), error=ref(''), busy=ref(false), clientModal=ref(false)
-const hardware=ref({serial_number:'',device_category:'Ноутбук',brand:'',model:'',specifications:{},cosmetic_condition:'',save_preset:false})
-const order=reactive({problem_description:'',completeness:'',cosmetic_notes:'',priority:'normal',master_id:null,is_warranty_case:false})
-const clientForm=reactive({full_name:'',email:'',phone:'',password:'',role:'client'})
-const available=computed(()=>staff.value ? devices.value.filter(item=>item.owner_id===owner.value) : devices.value)
-let lookupSequence=0
-onMounted(async()=>{
-  try{
-    const list=await api('/passports')
-    devices.value=list
-    if(staff.value){
-      const [people, workers]=await Promise.all([api('/users?role=client'),api('/users?role=master')])
-      clients.value=people.filter(item=>item.is_active); masters.value=workers.filter(item=>item.is_active)
-      if(serial.value){
-        const found=list.find(item=>item.serial_number===serial.value)
-        if(found){owner.value=found.owner_id;step.value=2;await lookup()}
-      }
-    }
-  }catch(e){error.value=e.message}
-})
-function pick() {
-  device.value=available.value.find(item=>item.id===deviceId.value) || null
-  serial.value=device.value?.serial_number || ''
-  newDevice.value=false
-}
-async function lookup(){
-  if(!serial.value.trim())return
-  const seq=++lookupSequence
-  error.value=''
+const session = useSession(), router = useRouter()
+if (session.staff) router.replace('/orders/intake')
+const devices = ref([]), pick = ref(null), form = ref(emptyQuick()), error = ref(''), busy = ref(false), loaded = ref(false)
+const delivery = ref({ method: 'pickup', city: '', branch: '' })
+const known = computed(() => devices.value.length > 0 && pick.value !== 'new')
+const device = computed(() => devices.value.find(item => item.id === pick.value))
+onMounted(async () => {
   try {
-    const found=await api('/passports/lookup-sn/'+encodeURIComponent(serial.value.trim()))
-    if(seq!==lookupSequence)return
-    if(found && found.owner_id!==owner.value){device.value=null;deviceId.value='';newDevice.value=false;error.value='Цей пристрій зареєстровано за іншим клієнтом.';return}
-    device.value=found;deviceId.value=found?.id || ''
-    newDevice.value=!found
-    hardware.value.serial_number=serial.value
-  }catch(e){if(seq===lookupSequence)error.value=e.message}
-}
-function useNew(){
-  deviceId.value='';device.value=null;newDevice.value=true
-  hardware.value.serial_number=serial.value
-}
-function back(){
-  error.value=''
-  if(step.value===3){step.value=2;return}
-  if(staff.value){step.value=1;deviceId.value='';device.value=null;newDevice.value=false}
-}
-async function addClient(){
-  busy.value=true
-  try{ const result=await api('/users',{method:'POST',data:clientForm}); clients.value.push(result); owner.value=result.id; clientModal.value=false }
-  catch(e){session.notify(e.message,'error')} finally{busy.value=false}
-}
-async function save(){
-  error.value='';busy.value=true
-  try{
-    let id=device.value?.id
-    const {save_preset,...specs}=hardware.value
-    if(!id && staff.value){
-      const created=await api('/passports',{method:'POST',data:{...specs,owner_id:owner.value,save_preset}})
-      device.value=created; id=created.id
-    }
-    const payload={...order,...(id ? {device_id:id} : {new_device:specs})}
-    const result=await api('/orders',{method:'POST',data:payload})
+    devices.value = await api('/passports')
+    if (devices.value.length === 1) pick.value = devices.value[0].id
+  } catch (e) { error.value = e.message } finally { loaded.value = true }
+})
+async function save() {
+  error.value = ''; busy.value = true
+  try {
+    const data = { problem_description: form.value.problem_description, delivery: delivery.value }
+    if (device.value) data.device_id = device.value.id
+    else data.new_device = devicePayload(form.value)
+    const result = await api('/orders', { method: 'POST', data })
     session.notify('Заявку зареєстровано.')
-    await router.push('/orders/'+result.id)
-  }catch(e){error.value=e.message}finally{busy.value=false}
+    await router.push('/orders/' + result.id)
+  } catch (e) { error.value = e.message } finally { busy.value = false }
 }
 </script>
-
 <template>
-  <RouterLink :to="staff?'/orders':'/my-cabinet'" class="back"><ArrowLeft :size="16"/> Повернутися до заявок</RouterLink>
-  <div class="page-head"><div><div class="eyebrow">ПРИЙМАННЯ ТЕХНІКИ</div><h1>Нова заявка</h1><p>{{ staff ? 'Виберіть клієнта, знайдіть паспорт та опишіть несправність.' : 'Оберіть пристрій і розкажіть, що з ним сталося.' }}</p></div></div>
+  <RouterLink to="/my-cabinet" class="back"><ArrowLeft :size="16"/> Повернутися до кабінету</RouterLink>
+  <div class="page-head"><h1>Нова заявка</h1></div>
   <section class="card form-card">
-    <div class="pills" aria-label="Кроки реєстрації"><span v-if="staff" class="pill" :class="{active:step===1}">1. Клієнт</span><span class="pill" :class="{active:step===2}">{{ staff ? '2.' : '1.' }} Пристрій</span><span class="pill" :class="{active:step===3}">{{ staff ? '3.' : '2.' }} Заявка</span></div>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
-    <form v-if="step===1" class="form-stack" @submit.prevent="step=2">
-      <label>Клієнт<select v-model="owner" required><option value="">Оберіть клієнта</option><option v-for="person in clients" :key="person.id" :value="person.id">{{ person.full_name }} · {{ person.phone }}</option></select></label>
-      <div class="actions"><button v-if="session.admin" class="button" type="button" @click="clientModal=true">Зареєструвати клієнта</button><button class="button primary">Далі <ArrowRight :size="16"/></button></div>
-    </form>
-    <form v-else-if="step===2" class="form-stack" @submit.prevent="step=3">
-      <label>Пристрій із реєстру<select v-model="deviceId" @change="pick"><option value="">Оберіть наявний пристрій</option><option v-for="item in available" :key="item.id" :value="item.id">{{ item.brand }} {{ item.model }} · {{ item.serial_number }}</option></select></label>
-      <div v-if="staff" class="search-form"><label>Серійний номер або IMEI<input v-model.trim="serial" maxlength="80" placeholder="Введіть серійний номер" @change="lookup"></label><button type="button" class="button" style="align-self:end" @click="lookup"><ScanLine :size="17"/> Знайти паспорт</button></div>
-      <Warranty :warranty="device?.warranty"/>
-      <PassportFields v-if="newDevice" v-model="hardware" :allow-preset="staff"/>
-      <div class="actions"><button v-if="staff" type="button" class="button" @click="back"><ArrowLeft :size="16"/> Назад</button><button v-if="!newDevice" type="button" class="button" @click="useNew">Новий пристрій</button><button class="button primary" :disabled="!device && !newDevice">Далі <ArrowRight :size="16"/></button></div>
-    </form>
-    <form v-else class="form-stack" @submit.prevent="save">
-      <p><strong>{{ device ? device.brand+' '+device.model : hardware.brand+' '+hardware.model }}</strong> · <span class="mono">{{ device?.serial_number || hardware.serial_number }}</span></p>
-      <Warranty :warranty="device?.warranty"/>
-      <label>Опис несправності<textarea v-model.trim="order.problem_description" minlength="3" maxlength="4000" required></textarea></label>
-      <label>Комплектація<input v-model.trim="order.completeness" placeholder="Наприклад, кабель живлення та сумка"></label>
-      <label>Примітки про зовнішній стан<textarea v-model.trim="order.cosmetic_notes"></textarea></label>
-      <div v-if="staff" class="form-grid">
-        <label>Пріоритет<select v-model="order.priority"><option value="normal">Звичайний</option><option value="urgent">Терміновий</option></select></label>
-        <label>Майстер<select v-model="order.master_id"><option :value="null">Не призначати</option><option v-for="worker in masters.filter(m=>session.admin || m.id===session.user.id)" :key="worker.id" :value="worker.id">{{ worker.full_name }} · активних: {{ worker.active_orders }}</option></select></label>
-        <label class="check full"><input v-model="order.is_warranty_case" type="checkbox"> Гарантійний випадок</label>
-      </div>
-      <div class="actions"><button type="button" class="button" @click="back"><ArrowLeft :size="16"/> Назад</button><button class="button primary" :disabled="busy">{{ busy ? 'Зберігаємо…' : 'Зареєструвати заявку' }}</button></div>
+    <form class="form-stack" @submit.prevent="save">
+      <template v-if="loaded && devices.length">
+        <div><strong>Який пристрій принесли?</strong>
+          <div class="device-picks" style="margin-top:8px">
+            <button v-for="item in devices" :key="item.id" type="button" class="device-pick" :class="{ active: pick === item.id }" @click="pick = item.id">
+              <component :is="icons[item.device_category]" :size="22"/><span><strong>{{ item.brand }} {{ item.model }}</strong><small>{{ item.serial_number || 'без серійного номера' }}</small></span>
+            </button>
+            <button type="button" class="device-pick" :class="{ active: pick === 'new' }" @click="pick = 'new'"><Plus :size="22"/><span><strong>Інший пристрій</strong><small>Додати новий</small></span></button>
+          </div>
+        </div>
+        <label v-if="device">Що сталося?<textarea v-model.trim="form.problem_description" required minlength="3" maxlength="4000" rows="3" placeholder="Коротко опишіть несправність"></textarea></label>
+      </template>
+      <QuickFields v-if="loaded && !device && (pick === 'new' || !devices.length)" v-model="form" show-serial/>
+      <DeliveryFields v-if="loaded && (device || pick === 'new' || !devices.length)" v-model="delivery"/>
+      <div class="actions"><button class="button primary" :disabled="busy || (!device && pick !== 'new' && devices.length > 0)">{{ busy ? 'Зберігаємо…' : 'Подати заявку' }}</button></div>
     </form>
   </section>
-  <Modal v-if="clientModal" title="Новий клієнт" @close="clientModal=false"><form class="form-stack" @submit.prevent="addClient">
-    <label>Ім’я та прізвище<input v-model.trim="clientForm.full_name" required></label><label>Електронна пошта<input v-model.trim="clientForm.email" type="email" required></label>
-    <label>Телефон<input v-model.trim="clientForm.phone" type="tel" required placeholder="+380…"></label><label>Тимчасовий пароль<input v-model="clientForm.password" type="password" minlength="8" required></label>
-    <button class="button primary" :disabled="busy">Створити клієнта</button></form></Modal>
 </template>

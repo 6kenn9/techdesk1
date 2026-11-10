@@ -1,10 +1,11 @@
 export async function api(path, { method = 'GET', data, blob = false } = {}) {
   const token = sessionStorage.getItem('techdesk-token')
   const headers = token ? { Authorization: 'Bearer ' + token } : {}
-  if (data !== undefined) headers['Content-Type'] = 'application/json'
+  const form = data instanceof FormData
+  if (data !== undefined && !form) headers['Content-Type'] = 'application/json'
   let response
   try {
-    response = await fetch('/api' + path, { method, headers, body: data === undefined ? undefined : JSON.stringify(data) })
+    response = await fetch('/api' + path, { method, headers, body: data === undefined ? undefined : form ? data : JSON.stringify(data) })
   } catch {
     throw new Error('Не вдалося з’єднатися із сервісом. Спробуйте ще раз.')
   }

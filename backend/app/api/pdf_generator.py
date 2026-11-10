@@ -7,6 +7,9 @@ from fastapi import APIRouter, Response
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader, simpleSplit
+from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
@@ -47,9 +50,9 @@ def generate_pdf(db, order, certificate):
     title = "Гарантійний талон та акт виконаних робіт" if certificate else "Квитанція про приймання техніки"
     story = [p("TechDesk · Сервісний центр"), p(title, heading), p(f"Заявка {order.order_number}"),
              p(f"Прийнято: {date_label(order.created_at)}"),
-             p(f"Клієнт: {client.full_name} · {client.phone} · {client.email}"),
+             p(f"Клієнт: {client.full_name} · {client.phone}" + (f" · {client.email}" if client.email else "")),
              p(f"Пристрій: {device.device_category} · {device.brand} {device.model}"),
-             p(f"Серійний номер: {device.serial_number}")]
+             p(f"Серійний номер: {device.serial_number or 'не вказано'}")]
     if certificate:
         story.append(p("Роботи та встановлені запчастини", heading))
         data = [[p("Позиція", small), p("Кількість", small), p("Ціна", small), p("Сума", small)]]
@@ -60,7 +63,9 @@ def generate_pdf(db, order, certificate):
         table.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor("#eaf0ff")),
                                    ("GRID", (0,0), (-1,-1), .4, colors.HexColor("#d5dfef")),
                                    ("VALIGN", (0,0), (-1,-1), "TOP")]))
-        story.extend([table, Spacer(1, 10), p(f"Погоджена сума: {format_money(order.approved_total or order.total_cost)}"),
+        if order.is_warranty_case:
+            story.append(p("Гарантійний випадок: роботи та запчастини надано без оплати клієнтом."))
+        story.extend([table, Spacer(1, 10), p(f"Погоджена сума: {format_money(order.approved_total if order.approved_total is not None else order.total_cost)}"),
                       p(f"Облікована оплата: {format_money(order.paid_amount)}")])
         if order.completed_at:
             story.append(p(f"Дата завершення: {date_label(order.completed_at)}"))
@@ -90,6 +95,40 @@ def generate_pdf(db, order, certificate):
 def passport_qr(device_id: int, db: Db, user: Current):
     access_device(db, device_id, user)
     return Response(qr_image(f"{PUBLIC_URL}/passports/{device_id}").getvalue(), media_type="image/png")
+
+def label_pdf(device):
+    """Наліпка 58×40 мм для термопринтера: QR-код паспорта, модель і серійний номер."""
+    output, font = BytesIO(), font_name()
+    page = canvas.Canvas(output, pagesize=(58 * mm, 40 * mm))
+    page.setTitle(f"Наліпка {device.serial_number or device.id}")
+    page.drawImage(ImageReader(qr_image(f"{PUBLIC_URL}/passports/{device.id}")), 1.5 * mm, 5 * mm, 30 * mm, 30 * mm)
+    x, width, y = 32.5 * mm, 24 * mm, 34 * mm
+    page.setFont(font, 8)
+    page.drawString(x, y, "TechDesk")
+    y -= 4 * mm
+    page.setFont(font, 6)
+    for line in simpleSplit(f"{device.brand} {device.model}", font, 6, width)[:3]:
+        page.drawString(x, y, line)
+        y -= 2.6 * mm
+    y -= 1 * mm
+    page.setFont(font, 5.5)
+    page.drawString(x, y, "S/N")
+    y -= 2.4 * mm
+    for line in simpleSplit(device.serial_number or "S/N не вказано", font, 5.5, width)[:4]:
+        page.drawString(x, y, line)
+        y -= 2.4 * mm
+    page.setFont(font, 5)
+    page.drawString(1.5 * mm, 2.5 * mm, "Відскануйте, щоб відкрити цифровий паспорт")
+    page.showPage()
+    page.save()
+    return output.getvalue()
+
+@router.get("/passports/{device_id}/label")
+def passport_label(device_id: int, db: Db, user: Current):
+    device = access_device(db, device_id, user)
+    return Response(label_pdf(device), media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="label-{device.id}.pdf"',
+                             "Cache-Control": "private, no-store"})
 
 @router.get("/orders/{order_id}/pdf/{kind}")
 def pdf(order_id: int, kind: str, db: Db, user: Current):

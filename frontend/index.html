@@ -3,7 +3,16 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#101929">
+    <meta name="theme-color" content="#f5f6f8">
+    <meta name="color-scheme" content="light dark">
+    <script>
+      // Тема ставиться до першого малювання сторінки, щоб не було спалаху світлого фону.
+      try {
+        const saved = localStorage.getItem('techdesk-theme') || 'system'
+        const dark = saved === 'dark' || (saved === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+      } catch {}
+    </script>
     <meta name="description" content="TechDesk — облік сервісного центру та цифрові паспорти пристроїв.">
     <title>TechDesk — сервісний центр</title>
     <link rel="icon" href="/mark.svg" type="image/svg+xml">

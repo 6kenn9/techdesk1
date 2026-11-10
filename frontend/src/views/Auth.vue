@@ -1,9 +1,10 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, ArrowRight, Cpu, Laptop, ShieldCheck, Smartphone, UserRound } from 'lucide-vue-next'
+import { ArrowLeft, ArrowRight } from 'lucide-vue-next'
 import { useSession } from '../state'
 import { api } from '../api'
+import ThemeToggle from '../components/ThemeToggle.vue'
 
 const session = useSession()
 const route = useRoute()
@@ -14,16 +15,16 @@ const error = ref('')
 const busy = ref(false)
 const demo = ref(false)
 const roles = [
-  ['Адміністратор', 'Аналітика й керування', 'admin', 'admin123', ShieldCheck],
-  ['Майстер ноутбуків і ПК', 'Діагностика та модернізація', 'master1', 'master123', Laptop],
-  ['Майстер мобільної техніки', 'Ремонт смартфонів і планшетів', 'master2', 'master123', Smartphone],
-  ['Клієнт', 'Замовлення й погодження', 'client1', 'client123', UserRound],
+  { label: 'Адміністратор', email: 'admin@techdesk.ua', password: 'admin123', role: 'admin' },
+  { label: 'Інженер ПК', email: 'master1@techdesk.ua', password: 'master123', role: 'master' },
+  { label: 'Інженер мобільних пристроїв', email: 'master2@techdesk.ua', password: 'master123', role: 'master' },
+  { label: 'Клієнт', email: 'client1@techdesk.ua', password: 'client123', role: 'client' },
 ]
 onMounted(async () => { try { demo.value = (await api('/auth/options')).demo_mode } catch {} })
 async function submit(account) {
   error.value = ''; busy.value = true
   try {
-    const data = account ? { email: account[2] + '@techdesk.ua', password: account[3] } : register.value ? { ...form } : { email: form.email, password: form.password }
+    const data = account ? { email: account.email, password: account.password } : register.value ? { ...form } : { email: form.email, password: form.password }
     await session.authenticate(register.value ? 'register' : 'login', data)
     const next = route.query.next
     await router.push(typeof next === 'string' && next.startsWith('/') && !next.startsWith('//') ? next : session.home)
@@ -32,30 +33,35 @@ async function submit(account) {
 }
 </script>
 <template>
-  <main class="auth-shell">
-    <section class="auth-aside">
-      <RouterLink to="/" class="brand"><img src="/mark.svg" alt="" width="42" height="42"><div>TechDesk<small>СЕРВІСНИЙ ЦЕНТР</small></div></RouterLink>
-      <div class="auth-aside-inner"><div class="tile-icon"><Cpu :size="28"/></div><p class="eyebrow">ОБЛІК СЕРВІСНОГО ЦЕНТРУ</p><h1>Єдиний простір для ремонту техніки</h1><p>Пристрої, заявки, склад і документи пов’язані в одній системі.</p></div>
-      <RouterLink to="/" class="back"><ArrowLeft :size="16"/> На головну</RouterLink>
-    </section>
-    <section class="auth-main">
-      <div class="auth-card"><div class="eyebrow">ОСОБИСТИЙ ДОСТУП</div><h2>{{ register ? 'Створення облікового запису' : 'Вхід до TechDesk' }}</h2>
-        <p>{{ register ? 'Зареєструйтеся, щоб відстежувати стан ремонту.' : 'Введіть дані вашого облікового запису.' }}</p>
+  <div class="auth-shell">
+    <header class="public-topbar">
+      <div class="wrap public-nav">
+        <RouterLink to="/" class="brand"><img src="/mark.svg" alt="" width="30" height="30">TechDesk</RouterLink>
+        <span class="actions"><ThemeToggle/><RouterLink to="/" class="button"><ArrowLeft :size="16"/> На головну</RouterLink></span>
+      </div>
+    </header>
+    <main class="auth-main">
+      <section class="card auth-card">
+        <h1>{{ register ? 'Створення облікового запису' : 'Вхід до TechDesk' }}</h1>
         <form class="form-stack" @submit.prevent="submit()">
           <label v-if="register">Ім’я та прізвище<input v-model.trim="form.full_name" autocomplete="name" required maxlength="150"></label>
           <label v-if="register">Телефон<input v-model.trim="form.phone" autocomplete="tel" type="tel" placeholder="+380…" required></label>
-          <label>Електронна пошта<input v-model.trim="form.email" autocomplete="email" type="email" placeholder="name@example.com" required></label>
+          <label>Електронна пошта<input v-model.trim="form.email" autocomplete="email" type="email" required></label>
           <label>Пароль<input v-model="form.password" :autocomplete="register ? 'new-password' : 'current-password'" type="password" :minlength="register ? 8 : 1" required></label>
           <p v-if="error" class="error" role="alert">{{ error }}</p>
           <button class="button primary wide" :disabled="busy">{{ register ? 'Зареєструватися' : 'Увійти' }} <ArrowRight :size="17"/></button>
         </form>
         <p class="auth-switch"><RouterLink :to="register ? '/login' : '/register'">{{ register ? 'Уже маєте обліковий запис? Увійти' : 'Створити обліковий запис' }}</RouterLink></p>
-        <template v-if="demo && !register"><div class="divider-label">ДЕМОНСТРАЦІЙНИЙ ДОСТУП</div>
-          <div class="demo-grid"><button v-for="account in roles" :key="account[2]" class="demo-card" :disabled="busy" @click="submit(account)">
-            <component :is="account[4]" :size="20"/><span><strong>{{ account[0] }}</strong><small>{{ account[1] }}</small></span>
-          </button></div>
-        </template>
-      </div>
-    </section>
-  </main>
+      </section>
+      <section v-if="demo && !register" class="demo-panel" aria-labelledby="demo-title">
+        <div class="preview-bar"><h2 id="demo-title">Демонстраційні облікові записи</h2><span class="count">4</span></div>
+        <ul class="demo-list">
+          <li v-for="account in roles" :key="account.email">
+            <div><span class="chip" :class="'demo-' + account.role">{{ account.label }}</span><span class="mono demo-email">{{ account.email }}</span></div>
+            <button class="button small" :disabled="busy" :aria-label="'Увійти: ' + account.label" @click="submit(account)">Увійти <ArrowRight :size="14"/></button>
+          </li>
+        </ul>
+      </section>
+    </main>
+  </div>
 </template>

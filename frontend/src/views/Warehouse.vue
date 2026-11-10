@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, reactive, ref, watch } from 'vue'
-import { Boxes, PackagePlus, Pencil, Plus, Search } from 'lucide-vue-next'
+import { PackagePlus, Pencil, Plus, Search } from 'lucide-vue-next'
 import { api, query } from '../api'
 import { categories, dateTime, money, specLabels } from '../domain'
 import { useSession } from '../state'
@@ -45,7 +45,7 @@ async function save(){
 }
 </script>
 <template>
-  <div class="page-head"><div><div class="eyebrow"><Boxes :size="16"/> МАТЕРІАЛИ Й ПОСЛУГИ</div><h1>Склад і послуги</h1><p>Запчастини, складські рухи та прейскурант робіт.</p></div><button v-if="session.admin && tab!=='log'" class="button primary" @click="open(tab==='parts'?'part':'service')"><Plus :size="17"/> {{ tab==='parts'?'Нова запчастина':'Нова послуга' }}</button></div>
+  <div class="page-head"><div class="page-title"><h1>Склад і послуги</h1><span class="count">{{ tab === 'parts' ? items.length : tab === 'services' ? services.length : movements.length }}</span></div><button v-if="session.admin && tab!=='log'" class="button primary" @click="open(tab==='parts'?'part':'service')"><Plus :size="16"/> {{ tab==='parts'?'Нова запчастина':'Нова послуга' }}</button></div>
   <div class="tabs"><button v-for="[key,label] in [['parts','Запчастини'],['services','Прейскурант робіт'],...(session.admin?[['log','Історія руху']]:[])]" :key="key" class="tab" :class="{active:tab===key}" @click="tab=key">{{ label }}</button></div>
   <p v-if="error" class="error">{{ error }}</p>
   <section v-if="tab==='parts'" class="card">
