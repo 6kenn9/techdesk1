@@ -18,7 +18,8 @@ import Intake from './views/Intake.vue'
 export function makeRouter(pinia) {
   const router = createRouter({
     history: createWebHistory(),
-    scrollBehavior: () => ({ top: 0 }),
+    // Посилання на розділ головної (#contacts тощо) — одразу до нього, з відступом під липку шапку
+    scrollBehavior: (to, from, saved) => to.hash ? { el: to.hash, top: 70, behavior: 'smooth' } : saved || { top: 0 },
     routes: [
       { path: '/', component: Landing },
       { path: '/track/:code', component: Landing },

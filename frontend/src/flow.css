@@ -32,3 +32,6 @@
 /* Кабінет: етап і «Оцінити ремонт» з відступом, на вузькому екрані — одне під одним */
 .result-cell { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
 .result-cell .rate-link { margin-top: 0; }
+
+/* Перехід за пунктом меню головної: розділ не ховається під липкою шапкою */
+.landing section[id], .landing footer[id] { scroll-margin-top: 72px; }
