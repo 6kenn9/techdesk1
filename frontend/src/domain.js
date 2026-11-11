@@ -95,3 +95,16 @@ export function devicePayload(form) {
   const { brand, model } = form.brand && form.model ? form : splitModel(form.title)
   return { device_category: form.device_category, brand, model, serial_number: form.serial_number.trim() || null }
 }
+
+// Номер заявки (TD-2026-0007) → id заявки, якщо користувач має до неї доступ; інакше null.
+export async function orderIdByNumber(number) {
+  const { api, query } = await import('./api')
+  const code = String(number || '').trim().toUpperCase()
+  if (!/^TD-\d{4}-\d+$/.test(code)) return null
+  try {
+    const found = (await api('/orders' + query({ q: code }))).find(o => o.order_number === code)
+    return found ? found.id : null
+  } catch {
+    return null
+  }
+}

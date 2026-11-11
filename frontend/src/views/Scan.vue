@@ -5,6 +5,7 @@ import { Camera, CameraOff, Search } from 'lucide-vue-next'
 import jsQR from 'jsqr'
 import { api } from '../api'
 import { useSession } from '../state'
+import { orderIdByNumber } from '../domain'
 const router = useRouter(),
   session = useSession()
 const video = ref(null),
@@ -79,12 +80,19 @@ async function open(value) {
   try {
     const url = new URL(text)
     const path = url.pathname.match(/^\/(passports|orders)\/\d+$|^\/track\/[^/]+$/)?.[0]
+    if (path?.startsWith('/track/')) {
+      // QR із квитанції: працівнику (і власнику) відкриваємо саму заявку, а не публічний статус
+      const id = await orderIdByNumber(decodeURIComponent(path.slice(7)))
+      return router.push(id ? '/orders/' + id : path)
+    }
     if (path) return router.push(path + url.hash)
   } catch {
     /* не посилання — шукаємо як серійний номер */
   }
   busy.value = true
   try {
+    const orderId = await orderIdByNumber(text)
+    if (orderId) return router.push('/orders/' + orderId)
     const device = await api('/passports/lookup-sn/' + encodeURIComponent(text))
     if (device) return router.push('/passports/' + device.id)
     session.notify('Паспорт не знайдено. Можна оформити нову заявку.')

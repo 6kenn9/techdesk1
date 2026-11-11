@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowRight,
   ArrowUpRight,
@@ -22,6 +22,7 @@ import {
   Wrench,
 } from 'lucide-vue-next'
 import { api, query } from '../api'
+import { orderIdByNumber } from '../domain'
 import { useSession } from '../state'
 import Stage from '../components/Stage.vue'
 import ThemeToggle from '../components/ThemeToggle.vue'
@@ -29,6 +30,7 @@ import Timeline from '../components/Timeline.vue'
 
 const session = useSession()
 const route = useRoute()
+const router = useRouter()
 const code = ref(route.params.code || '')
 const result = ref(null)
 const error = ref('')
@@ -159,8 +161,14 @@ async function lookup() {
   }
 }
 
-onMounted(() => {
-  if (code.value) lookup()
+onMounted(async () => {
+  if (!code.value) return
+  // QR із квитанції відкрив увійшлий працівник або власник — ведемо одразу в заявку
+  if (session.user) {
+    const id = await orderIdByNumber(code.value)
+    if (id) return router.replace('/orders/' + id)
+  }
+  lookup()
 })
 </script>
 
