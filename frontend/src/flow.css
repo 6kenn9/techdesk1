@@ -13,3 +13,6 @@
 .quick-chip.client span, .quick-chip.free span { background: var(--warn-bg); color: var(--warn); }
 .quick-chip.late span { background: var(--danger-bg); color: var(--danger); }
 .quick-chip.pickup span { background: var(--ok-bg); color: var(--ok); }
+
+/* Номери етапів на головній: основний шрифт замість моноширинного, цифри однакової ширини. */
+.step-num.mono { font-family: inherit; font-size: .8rem; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .03em; }
