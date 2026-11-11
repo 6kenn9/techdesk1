@@ -123,7 +123,7 @@ async function load() {
 }
 async function exportCsv() {
   try {
-    await download('/analytics/export.csv' + query(range), `techdesk-аналітика-${range.start || 'весь-час'}.csv`)
+    await download('/analytics/export.xlsx' + query(range), `techdesk-аналітика-${range.start || 'весь-час'}.xlsx`)
   } catch (e) {
     error.value = e.message
   }

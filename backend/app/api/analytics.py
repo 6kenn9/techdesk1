@@ -123,3 +123,31 @@ def export_dashboard(db: Db, user: Admin, start: date | None = None, end: date |
     rows += [[m["name"], m["active"], m["completed"], money_text(m["revenue"]), money_text(m["rating"]) if m["rating"] else "—"] for m in data["staff"]]
     rows += [[], ["Етап (заявки, прийняті за період)", "Кількість"]] + [[k, v] for k, v in data["statuses"].items()]
     return csv_response(rows, f"techdesk-analytics-{start or 'all'}-{end or 'all'}.csv")
+
+@router.get("/export.xlsx")
+def export_dashboard_xlsx(db: Db, user: Admin, start: date | None = None, end: date | None = None):
+    """Звіт аналітики за період у файлі Excel."""
+    from decimal import Decimal
+    from ..services.excel import report_sheet, xlsx_response
+    data = dashboard(db, user, start, end)
+    period = f"{start:%d.%m.%Y} – {end:%d.%m.%Y}" if start and end else "увесь час"
+    money = lambda v: Decimal(v or 0)
+    sections = [
+        ("Підсумки", ["Показник", "Значення"], [
+            ["Виручка, грн", money(data["revenue"])], ["Собівартість запчастин, грн", money(data["parts_cost"])],
+            ["Розрахунковий прибуток, грн", money(data["profit"])], ["Завершено заявок", data["completed"]],
+            ["Середній чек, грн", money(data["average"])],
+            ["Середня оцінка клієнтів", round(float(data["rating"]["average"]), 2) if data["rating"]["average"] else "—"],
+            ["Кількість оцінок", data["rating"]["count"]], ["Активні ремонти зараз", data["active"]]]),
+        ("Оплати за способом", ["Спосіб оплати", "Сума, грн"],
+         [[label, money(data["payment_methods"][key])] for key, label in
+          (("cash", "Готівка"), ("card", "Картка"), ("transfer", "Переказ"))]),
+        ("По днях", ["Дата", "Виручка, грн", "Запчастини, грн", "Прибуток, грн"],
+         [[date.fromisoformat(day["date"]), money(day["revenue"]), money(day["parts_cost"]), money(day["profit"])] for day in data["daily"]]),
+        ("Майстри", ["Майстер", "Активні", "Завершено", "Виручка, грн", "Оцінка"],
+         [[m["name"], m["active"], m["completed"], money(m["revenue"]), round(float(m["rating"]), 2) if m["rating"] else "—"]
+          for m in data["staff"]]),
+        ("Етапи заявок, прийнятих за період", ["Етап", "Кількість"], [[k, v] for k, v in data["statuses"].items()]),
+    ]
+    return xlsx_response(lambda wb: report_sheet(wb, "Аналітика", f"Звіт TechDesk · {period}", sections),
+                         f"techdesk-analytics-{start or 'all'}-{end or 'all'}.xlsx")

@@ -772,3 +772,21 @@ def test_google_login(client, identities, monkeypatch):
     # телефон, що вже є, не дозволяє створити другий кабінет
     claims["email"] = "second@gmail.com"
     request(client, {}, "POST", "/auth/google", {"credential": token, "phone": "+380671112233"}, 409)
+
+def test_excel_exports(client, identities):
+    import io
+    from openpyxl import load_workbook
+    admin, _ = identities["admin"]
+    customer, _ = identities["client"]
+    response = client.get("/api/orders/export.xlsx", headers=admin)
+    assert response.status_code == 200 and response.headers["content-type"].startswith("application/vnd.openxml")
+    ws = load_workbook(io.BytesIO(response.content)).active
+    assert ws["A1"].value == "Номер" and ws.freeze_panes == "A2"
+    phone = ws["D2"]
+    assert isinstance(phone.value, str) and phone.number_format == "@"
+    assert ws["B2"].is_date and isinstance(ws["L2"].value, (int, float))
+    assert ws.column_dimensions["C"].width > 12
+    assert client.get("/api/orders/export.xlsx", headers=customer).status_code == 403
+    report = load_workbook(io.BytesIO(client.get("/api/analytics/export.xlsx", headers=admin).content)).active
+    assert "Звіт TechDesk" in report["A1"].value
+    assert any(row[0].value == "Майстри" for row in report.iter_rows())

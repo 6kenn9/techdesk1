@@ -67,6 +67,28 @@ def export_orders(db: Db, user: Staff, q: str = Query("", max_length=160), statu
                      order.delivery_ttn or "", order.rating or ""])
     return csv_response(rows, f"techdesk-orders-{day_type.today().isoformat()}.csv")
 
+@router.get("/export.xlsx")
+def export_orders_xlsx(db: Db, user: Staff, q: str = Query("", max_length=160), status: str = "",
+                       category: str = "", master_id: int | None = None, warranty_only: bool = False):
+    """Те саме, що CSV, але справжній файл Excel: дати й суми — числа, телефони — текст, ширина колонок."""
+    from ..services.excel import table_sheet, xlsx_response
+    orders = filtered_orders(db, user, q, status, category, master_id, warranty_only)
+    header = ["Номер", "Створено", "Клієнт", "Телефон", "Пристрій", "Категорія", "Серійний номер", "Етап", "Майстер",
+              "Пріоритет", "Гарантійний", "Сума, грн", "Оплачено, грн", "Завершено", "Отримання", "ТТН", "Оцінка"]
+    rows = []
+    for order in orders:
+        device, client = db.get(Device, order.device_id), db.get(User, order.client_id)
+        master = db.get(User, order.master_id) if order.master_id else None
+        rows.append([order.order_number, local_date(order.created_at), client.full_name, client.phone,
+                     f"{device.brand} {device.model}", device.device_category, device.serial_number or "", LABELS[order.status],
+                     master.full_name if master else "", "терміновий" if order.priority == "urgent" else "звичайний",
+                     "так" if order.is_warranty_case else "ні", Decimal(order.total_cost or 0), Decimal(order.paid_amount or 0),
+                     local_date(order.completed_at) if order.completed_at else None,
+                     f"Нова Пошта: {order.delivery_city}, {order.delivery_branch}" if order.delivery_method == "nova_poshta" else "самовивіз",
+                     order.delivery_ttn or "", order.rating])
+    return xlsx_response(lambda wb: table_sheet(wb, "Заявки", header, rows),
+                         f"techdesk-orders-{day_type.today().isoformat()}.xlsx")
+
 def validate_master(db, master_id):
     if master_id is not None:
         master = db.get(User, master_id)

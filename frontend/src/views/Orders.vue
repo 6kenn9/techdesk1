@@ -39,8 +39,8 @@ let request = 0;
 async function exportCsv() {
   try {
     await download(
-      "/orders/export.csv" + query(filters),
-      `techdesk-заявки-${new Date().toISOString().slice(0, 10)}.csv`,
+      "/orders/export.xlsx" + query(filters),
+      `techdesk-заявки-${new Date().toISOString().slice(0, 10)}.xlsx`,
     );
   } catch (e) {
     session.notify(e.message, "error");
