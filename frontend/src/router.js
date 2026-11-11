@@ -36,7 +36,6 @@ export function makeRouter(pinia) {
       { path: '/passports', component: Passports, meta: { auth: true, label: 'Цифрові паспорти' } },
       { path: '/passports/:id', component: PassportDetail, meta: { auth: true, label: 'Паспорт пристрою' } },
       { path: '/my-day', component: () => import('./views/MyDay.vue'), meta: { roles: ['master'], label: 'Мій день' } },
-      { path: '/scan', component: () => import('./views/Scan.vue'), meta: { roles: ['admin', 'master'], label: 'Сканер' } },
       { path: '/profile', component: () => import('./views/Profile.vue'), meta: { auth: true, label: 'Профіль' } },
       { path: '/my-cabinet', component: Cabinet, meta: { roles: ['client'], label: 'Особистий кабінет' } },
       { path: '/:pathMatch(.*)*', redirect: '/' },
