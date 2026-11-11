@@ -23,6 +23,7 @@ services:
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:5173}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-995802809218-8p723mdrs6itjbtgkg84v9gii8a6b45u.apps.googleusercontent.com}
     depends_on:
       db:
         condition: service_healthy

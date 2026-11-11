@@ -32,6 +32,10 @@ class Login(Input):
     email: EmailStr
     password: str = Field(min_length=1, max_length=128)
 
+class GoogleLogin(Input):
+    credential: str = Field(min_length=20, max_length=4096)
+    phone: Phone | None = None
+
 class Registration(Login):
     full_name: str = Field(min_length=1, max_length=150)
     phone: Phone

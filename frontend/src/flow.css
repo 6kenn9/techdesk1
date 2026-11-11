@@ -16,3 +16,8 @@
 
 /* Номери етапів на головній: основний шрифт замість моноширинного, цифри однакової ширини. */
 .step-num.mono { font-family: inherit; font-size: .8rem; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .03em; }
+
+/* Вхід через Google */
+.auth-or { display: flex; align-items: center; gap: 10px; margin: 14px 0 12px; color: var(--muted, #6b7280); font-size: .85rem; }
+.auth-or::before, .auth-or::after { content: ""; flex: 1; height: 1px; background: var(--border, rgba(127,127,127,.3)); }
+.google-slot { display: flex; justify-content: center; min-height: 44px; color-scheme: light; }

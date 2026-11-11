@@ -11,7 +11,7 @@ export async function api(path, { method = 'GET', data, blob = false } = {}) {
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
-    if (response.status === 401 && token && token === sessionStorage.getItem('techdesk-token') && !path.startsWith('/auth/login')) {
+    if (response.status === 401 && token && token === sessionStorage.getItem('techdesk-token') && !path.startsWith('/auth/login') && !path.startsWith('/auth/google')) {
       sessionStorage.removeItem('techdesk-token')
       window.dispatchEvent(new Event('techdesk-expired'))
     }

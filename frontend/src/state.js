@@ -17,7 +17,9 @@ export const useSession = defineStore('session', {
       this.loaded = true
     },
     async authenticate(path, data) {
-      const response = await api('/auth/' + path, { method: 'POST', data })
+      await this.accept(await api('/auth/' + path, { method: 'POST', data }))
+    },
+    async accept(response) {
       sessionStorage.setItem('techdesk-token', response.access_token)
       this.user = response.user
       this.loaded = true

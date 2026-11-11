@@ -1,5 +1,5 @@
 <script setup>
-import { computed, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch, nextTick } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ArrowLeft, ArrowRight } from "lucide-vue-next";
 import { useSession } from "../state";
@@ -13,6 +13,91 @@ const register = computed(() => route.path === "/register");
 const form = reactive({ email: "", password: "", full_name: "", phone: "" });
 const error = ref("");
 const busy = ref(false);
+
+// ----- Вхід через Google (Google Identity Services) -----
+const googleId = ref("");
+const googleButton = ref(null);
+const googleCredential = ref("");
+const googlePhone = ref("");
+const googleName = ref("");
+async function finish() {
+  const next = route.query.next;
+  await router.push(
+    typeof next === "string" && next.startsWith("/") && !next.startsWith("//")
+      ? next
+      : session.home,
+  );
+}
+async function sendGoogle() {
+  error.value = "";
+  busy.value = true;
+  try {
+    const data = { credential: googleCredential.value };
+    if (googlePhone.value) data.phone = googlePhone.value;
+    const response = await api("/auth/google", { method: "POST", data });
+    if (response.needs_phone) {
+      googleName.value = response.full_name;
+      return;
+    }
+    await session.accept(response);
+    await finish();
+  } catch (e) {
+    error.value = e.message;
+  } finally {
+    busy.value = false;
+  }
+}
+function onGoogle(response) {
+  googleCredential.value = response.credential;
+  googlePhone.value = "";
+  googleName.value = "";
+  sendGoogle();
+}
+function loadGoogle() {
+  return new Promise((resolve, reject) => {
+    if (window.google?.accounts?.id) return resolve();
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.onload = resolve;
+    script.onerror = reject;
+    document.head.appendChild(script);
+  });
+}
+async function drawGoogle() {
+  if (!googleId.value) return;
+  await nextTick();
+  if (!googleButton.value) return;
+  const dark = document.documentElement.dataset.theme === "dark";
+  window.google.accounts.id.initialize({
+    client_id: googleId.value,
+    callback: onGoogle,
+    ux_mode: "popup",
+  });
+  googleButton.value.innerHTML = "";
+  window.google.accounts.id.renderButton(googleButton.value, {
+    type: "standard",
+    theme: dark ? "filled_black" : "outline",
+    size: "large",
+    text: register.value ? "signup_with" : "signin_with",
+    shape: "rectangular",
+    logo_alignment: "left",
+    width: 320,
+    locale: "uk",
+  });
+}
+onMounted(async () => {
+  try {
+    googleId.value = (await api("/auth/options")).google_client_id || "";
+    if (!googleId.value) return;
+    await loadGoogle();
+    await drawGoogle();
+  } catch {
+    googleId.value = ""; // немає доступу до Google — лишається звичайна форма
+  }
+});
+watch(register, drawGoogle);
+
 async function submit() {
   error.value = "";
   busy.value = true;
@@ -101,6 +186,34 @@ async function submit() {
             <ArrowRight :size="17" />
           </button>
         </form>
+        <template v-if="googleId">
+          <div class="auth-or"><span>або</span></div>
+          <form
+            v-if="googleName"
+            class="form-stack"
+            @submit.prevent="sendGoogle()"
+          >
+            <p class="muted">
+              Вітаємо, {{ googleName }}! Для зв’язку з майстром вкажіть телефон
+              — і кабінет буде створено.
+            </p>
+            <label>
+              Телефон
+              <input
+                v-model.trim="googlePhone"
+                autocomplete="tel"
+                type="tel"
+                placeholder="+380…"
+                required
+              />
+            </label>
+            <button class="button primary wide" :disabled="busy">
+              Завершити реєстрацію
+              <ArrowRight :size="17" />
+            </button>
+          </form>
+          <div v-else ref="googleButton" class="google-slot"></div>
+        </template>
         <p class="auth-switch">
           <RouterLink :to="register ? '/login' : '/register'">
             {{

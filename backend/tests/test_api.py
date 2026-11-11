@@ -736,3 +736,39 @@ def test_telegram_link_buttons_only_for_public_site(monkeypatch):
     monkeypatch.setattr(telegram, "PUBLIC_URL", "https://techdesk.example.ua")
     text, buttons = telegram.with_link("Текст", "Відкрити", "/orders")
     assert text == "Текст" and buttons[0][0]["url"] == "https://techdesk.example.ua/orders"
+
+def test_google_login(client, identities, monkeypatch):
+    from app.api import auth as auth_module
+    from app.services import google
+    monkeypatch.setattr(auth_module, "GOOGLE_CLIENT_ID", "test-client.apps.googleusercontent.com")
+    claims = {"email": "Newbie@Gmail.com", "email_verified": True, "name": "Новий Клієнт"}
+    def fake(credential):
+        if credential.startswith("bad"):
+            raise ValueError("bad token")
+        return claims
+    monkeypatch.setattr(google, "verify_credential", fake)
+    token = "t" * 30
+    assert request(client, {}, "GET", "/auth/options")["google_client_id"] == "test-client.apps.googleusercontent.com"
+    # недійсний токен
+    request(client, {}, "POST", "/auth/google", {"credential": "bad" + "x" * 30}, 401)
+    # новий користувач: спершу просимо телефон
+    first = request(client, {}, "POST", "/auth/google", {"credential": token})
+    assert first["needs_phone"] is True and first["email"] == "newbie@gmail.com"
+    created = request(client, {}, "POST", "/auth/google", {"credential": token, "phone": "+380671112233"})
+    assert created["user"]["role"] == "client" and created["user"]["email"] == "newbie@gmail.com"
+    # повторний вхід без телефону — той самий кабінет
+    again = request(client, {}, "POST", "/auth/google", {"credential": token})
+    assert again["user"]["id"] == created["user"]["id"]
+    headers = {"Authorization": "Bearer " + again["access_token"]}
+    assert request(client, headers, "GET", "/auth/me")["email"] == "newbie@gmail.com"
+    # існуючий кабінет за e-mail з Google
+    admin, admin_user = identities["admin"]
+    claims["email"] = admin_user["email"]
+    assert request(client, {}, "POST", "/auth/google", {"credential": token})["user"]["id"] == admin_user["id"]
+    # непідтверджена пошта відхиляється самою перевіркою, вимкнений акаунт — тут
+    claims["email"] = "newbie@gmail.com"
+    request(client, admin, "PATCH", f"/users/{created['user']['id']}", {"is_active": False, "specialization": ""})
+    request(client, {}, "POST", "/auth/google", {"credential": token}, 401)
+    # телефон, що вже є, не дозволяє створити другий кабінет
+    claims["email"] = "second@gmail.com"
+    request(client, {}, "POST", "/auth/google", {"credential": token, "phone": "+380671112233"}, 409)

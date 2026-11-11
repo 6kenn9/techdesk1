@@ -2,10 +2,10 @@ import secrets
 from datetime import timedelta
 from fastapi import APIRouter, Request
 from sqlalchemy import func, select
-from ..core.config import DEMO_MODE
+from ..core.config import DEMO_MODE, GOOGLE_CLIENT_ID
 from ..core.security import Admin, Current, Db, RateLimiter, Staff, client_ip, fail, hasher, throttle, token, verify
 from ..models.models import Order, User, now
-from ..schemas.schemas import Login, PasswordChange, Registration, StaffRegistration, TelegramNotifications, UserEdit
+from ..schemas.schemas import GoogleLogin, Login, PasswordChange, Registration, StaffRegistration, TelegramNotifications, UserEdit
 from ..services.domain import ACTIVE, public_user
 
 router = APIRouter(prefix="/api")
@@ -26,7 +26,8 @@ def create_account(db, payload, role="client", specialization=""):
 @router.get("/auth/options")
 def auth_options():
     from ..services import telegram
-    return {"demo_mode": DEMO_MODE, "telegram": telegram.bot is not None}
+    return {"demo_mode": DEMO_MODE, "telegram": telegram.bot is not None,
+            "google_client_id": GOOGLE_CLIENT_ID or None}
 
 @router.post("/auth/register", status_code=201, dependencies=[throttle(registrations, "register")])
 def register(payload: Registration, db: Db):
@@ -43,6 +44,37 @@ def login(payload: Login, db: Db, request: Request):
         login_failures.hit(key)
         fail(401, "Неправильна електронна пошта або пароль.")
     login_failures.reset(key)
+    return {"access_token": token(user), "user": public_user(user)}
+
+@router.post("/auth/google")
+def google_login(payload: GoogleLogin, db: Db, request: Request):
+    """Вхід через Google. Відомий e-mail — вхід в існуючий кабінет; новий — реєстрація клієнта,
+    для якої потрібен телефон (Google його не повідомляє)."""
+    from ..services import google
+    if not GOOGLE_CLIENT_ID:
+        fail(503, "Вхід через Google не налаштовано на сервері.")
+    key = (client_ip(request), "google")
+    if login_failures.blocked(key):
+        fail(429, "Забагато невдалих спроб входу. Спробуйте через 5 хвилин.")
+    try:
+        claims = google.verify_credential(payload.credential)
+    except Exception:
+        login_failures.hit(key)
+        fail(401, "Google не підтвердив вхід. Спробуйте ще раз.")
+    email = claims["email"].lower()
+    user = db.scalar(select(User).where(User.email == email))
+    if user:
+        if not user.is_active:
+            fail(401, "Обліковий запис вимкнено адміністратором.")
+    else:
+        if not payload.phone:
+            return {"needs_phone": True, "email": email, "full_name": claims.get("name") or email.split("@")[0]}
+        if db.scalar(select(User.id).where(User.phone == payload.phone)):
+            fail(409, "Цей телефон уже зареєстровано.")
+        user = User(full_name=(claims.get("name") or email.split("@")[0])[:150], email=email, phone=payload.phone,
+                    role="client", password_hash=hasher.hash(secrets.token_urlsafe(32)))
+        db.add(user)
+        db.commit()
     return {"access_token": token(user), "user": public_user(user)}
 
 @router.get("/auth/me")

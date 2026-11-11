@@ -14,3 +14,5 @@ httpx>=0.28,<1
 tzdata>=2025.1,<2027
 python-multipart>=0.0.18,<1
 pillow>=10.4,<13
+google-auth>=2.35,<3
+requests>=2.32,<3
