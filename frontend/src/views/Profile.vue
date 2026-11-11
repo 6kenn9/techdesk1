@@ -35,7 +35,7 @@ async function change() {
       <h2>Обліковий запис</h2>
       <dl class="facts">
         <div>
-          <dt>Ім’я</dt>
+          <dt>Прізвище та ім’я</dt>
           <dd>{{ session.user.full_name }}</dd>
         </div>
         <div>

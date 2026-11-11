@@ -168,7 +168,7 @@ async function save() {
       <template v-if="modal === 'user'">
         <template v-if="!selected">
           <label class="full">
-            Ім’я та прізвище
+            Прізвище та ім’я
             <input v-model.trim="form.full_name" maxlength="150" required />
           </label>
           <label>

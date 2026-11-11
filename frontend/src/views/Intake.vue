@@ -146,7 +146,7 @@ function again() { serial.value = ''; moreOpen.value = false; done.value = null;
       <!-- 2. Клієнт -->
       <div v-if="!client?.bySerial" class="form-grid">
         <label>Телефон клієнта<input v-model.trim="contact.phone" type="tel" inputmode="tel" placeholder="050 123 45 67" :required="!device"></label>
-        <label>Ім’я клієнта<input v-model.trim="contact.full_name" :disabled="!!client" :required="!client" maxlength="150" :placeholder="client ? '' : 'Для нового клієнта'"></label>
+        <label>Прізвище та ім’я клієнта<input v-model.trim="contact.full_name" :disabled="!!client" :required="!client" maxlength="150" :placeholder="client ? '' : 'Для нового клієнта'"></label>
       </div>
       <p v-if="client && !client.bySerial" class="alert"><UserPlus :size="18"/> Клієнт знайдений: <strong>{{ client.full_name }}</strong><span v-if="client.is_guest"> · кабінет без пошти</span></p>
 

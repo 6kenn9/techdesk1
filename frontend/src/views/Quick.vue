@@ -72,8 +72,9 @@ async function copy() {
         <form class="form-stack" @submit.prevent="submit">
           <div class="form-grid">
             <label>
-              Ім’я
-              <input v-model.trim="contact.full_name" required minlength="2" maxlength="150" autocomplete="name" />
+              Прізвище та ім’я
+              <input v-model.trim="contact.full_name" required minlength="3" maxlength="150" autocomplete="name"
+                     placeholder="Шевченко Тарас" pattern="\S+\s+\S.*" title="Вкажіть прізвище та ім’я через пробіл" />
             </label>
             <label>
               Телефон

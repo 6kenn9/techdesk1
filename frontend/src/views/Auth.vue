@@ -143,7 +143,7 @@ async function submit() {
         </h1>
         <form class="form-stack" @submit.prevent="submit()">
           <label v-if="register">
-            Ім’я та прізвище
+            Прізвище та ім’я
             <input
               v-model.trim="form.full_name"
               autocomplete="name"
