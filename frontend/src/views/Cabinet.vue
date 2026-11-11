@@ -136,8 +136,10 @@ async function pdf(order, kind) {
               <td><RouterLink :to="'/orders/' + item.id" class="mono">{{ item.order_number }}</RouterLink><small>{{ date(item.completed_at || item.created_at) }}</small></td>
               <td>{{ item.device }}</td>
               <td>
-                <Stage :status="item.status"/>
-                <RouterLink v-if="item.status === 'completed' && !item.rating" :to="'/orders/' + item.id" class="rate-link"><Star :size="14"/> Оцінити ремонт</RouterLink>
+                <div class="result-cell">
+                  <Stage :status="item.status"/>
+                  <RouterLink v-if="item.status === 'completed' && !item.rating" :to="'/orders/' + item.id" class="rate-link"><Star :size="14"/> Оцінити ремонт</RouterLink>
+                </div>
               </td>
               <td>
                 <div class="actions">

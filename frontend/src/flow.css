@@ -28,3 +28,7 @@
 .hero-facts li { display: inline-flex; align-items: center; gap: 7px; }
 .hero-facts svg { color: var(--accent, currentColor); flex: none; }
 .hero-cta + .hero-facts + .tracker-card, .hero-facts + .hero-highlights { margin-top: 22px; }
+
+/* Кабінет: етап і «Оцінити ремонт» з відступом, на вузькому екрані — одне під одним */
+.result-cell { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.result-cell .rate-link { margin-top: 0; }
