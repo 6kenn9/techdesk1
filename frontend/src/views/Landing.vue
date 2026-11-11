@@ -15,8 +15,8 @@ import {
   MapPin,
   Monitor,
   Phone,
-  Search,
   ShieldCheck,
+  Truck,
   Smartphone,
   Watch,
   Wrench,
@@ -36,7 +36,6 @@ const loading = ref(false)
 const activeCategory = ref(0)
 const openFaq = ref(0)
 
-const examples = ['TD-2026-0004', 'TD-2026-0007', 'TD-2026-0008']
 
 const serviceCatalog = [
   {
@@ -146,8 +145,7 @@ const faqs = [
   },
 ]
 
-async function lookup(sampleCode) {
-  if (typeof sampleCode === 'string') code.value = sampleCode
+async function lookup() {
   if (!code.value.trim()) return
   loading.value = true
   error.value = ''
@@ -175,7 +173,6 @@ onMounted(() => {
           TechDesk
         </RouterLink>
         <nav class="public-links" aria-label="Розділи сайту">
-          <a href="#tracking">Перевірка заявки</a>
           <a href="#services">Послуги та ціни</a>
           <a href="#advantages">Переваги</a>
           <a href="#workflow">Етапи роботи</a>
@@ -193,7 +190,7 @@ onMounted(() => {
     </header>
 
     <main>
-      <!-- 1. Перший екран і перевірка статусу заявки -->
+      <!-- 1. Перший екран -->
       <section class="hero-clean wrap" aria-labelledby="portal-title">
         <div class="hero-clean-head">
           <h1 id="portal-title">Сервісний центр комп’ютерної та цифрової техніки TechDesk</h1>
@@ -203,31 +200,25 @@ onMounted(() => {
           </p>
         </div>
 
-        <div id="tracking" class="card tracker-card">
-          <form class="search-form" @submit.prevent="lookup()">
-            <div class="input-icon">
-              <Search :size="17" />
-              <input
-                id="tracking-code"
-                v-model.trim="code"
-                aria-label="Номер заявки або серійний номер"
-                placeholder="Введіть номер заявки (наприклад, TD-2026-0004) або серійний номер..."
-                required
-                maxlength="80"
-              />
-            </div>
-            <button class="button primary" :disabled="loading">
-              {{ loading ? 'Пошук…' : 'Перевірити статус' }}
-            </button>
-          </form>
+        <div class="hero-cta">
+          <RouterLink :to="session.user ? (session.staff ? session.home : '/orders/new') : '/quick'" class="button primary">
+            Залишити заявку на ремонт
+            <ArrowRight :size="17" />
+          </RouterLink>
+          <RouterLink v-if="!session.user" to="/login" class="button">Увійти в кабінет</RouterLink>
+          <a href="#services" class="button">Послуги та ціни</a>
+        </div>
 
-          <div class="tracker-samples">
-            <span>Швидкий приклад:</span>
-            <button v-for="ex in examples" :key="ex" type="button" class="chip mono sample-link" @click="lookup(ex)">
-              {{ ex }}
-            </button>
-          </div>
+        <ul class="hero-facts">
+          <li><MapPin :size="16" /> м. Київ, вул. Політехнічна, 14</li>
+          <li><Clock :size="16" /> Пн–Пт 09:00–19:00, Сб 10:00–17:00</li>
+          <li><Phone :size="16" /> <span class="mono">+380 (44) 290-45-18</span></li>
+          <li><Truck :size="16" /> Повертаємо техніку Новою Поштою</li>
+        </ul>
 
+        <!-- Статус за QR-кодом із квитанції: /track/TD-2026-0004 -->
+        <div v-if="code" id="tracking" class="card tracker-card">
+          <p v-if="loading" class="muted">Завантаження статусу…</p>
           <p v-if="error" class="error" role="alert">{{ error }}</p>
           <div v-if="result" class="tracking-result" aria-live="polite">
             <div class="section-head">
@@ -408,7 +399,6 @@ onMounted(() => {
         <div class="footer-col">
           <h3>Навігація</h3>
           <ul class="footer-links">
-            <li><a href="#tracking">Перевірка заявки</a></li>
             <li><a href="#services">Послуги та ціни</a></li>
             <li><a href="#advantages">Переваги сервісу</a></li>
             <li><a href="#workflow">Етапи роботи та FAQ</a></li>
