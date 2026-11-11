@@ -66,7 +66,7 @@ onMounted(async () => {
     const workers = await api('/users?role=master')
     masters.value = workers.filter(item => item.is_active && (session.admin || item.id === session.user.id))
     if (!session.admin) extra.master_id = session.user.id
-    // Серійний номер можна передати в адресі сторінки (?serial=…), тоді поле заповнюється одразу.
+    // Перехід зі сканера: серійний номер уже відомий.
     if (typeof route.query.serial === 'string' && route.query.serial) serial.value = route.query.serial
   } catch (e) { error.value = e.message }
 })
