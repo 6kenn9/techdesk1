@@ -35,6 +35,8 @@ class Login(Input):
 class GoogleLogin(Input):
     credential: str = Field(min_length=20, max_length=4096)
     phone: Phone | None = None
+    # пароль наявного кабінету: потрібен один раз, щоб пов'язати з ним вхід через Google
+    password: str | None = Field(default=None, min_length=1, max_length=128)
 
 class Registration(Login):
     full_name: str = Field(min_length=1, max_length=150)

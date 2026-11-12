@@ -11,7 +11,8 @@ import Stage from '../components/Stage.vue'
 const session = useSession(), devices = ref([]), orders = ref([]), error = ref(''), busy = ref(true)
 const guest = reactive({ email: '', password: '' }), saving = ref(false)
 
-const finished = order => ['completed', 'cancelled', 'returned'].includes(order.status)
+// Скасована заявка лишається серед активних, доки пристрій не повернуть клієнту.
+const finished = order => ['completed', 'returned'].includes(order.status)
 const needsDecision = order => order.status === 'waiting_approval' && order.client_approval_status === 'pending'
 // Три групи заявок: потрібне рішення клієнта, ремонт триває, архів.
 const waiting = computed(() => orders.value.filter(needsDecision))
@@ -20,7 +21,14 @@ const archive = computed(() => orders.value.filter(finished))
 
 // Одне речення про те, що відбувається із заявкою зараз.
 function note(order) {
-  if (order.status === 'waiting_approval') return 'Кошторис відхилено. Майстер уточнить перелік робіт і зв’яжеться з вами.'
+  const started = order.approved_total != null  // клієнт уже погоджував кошторис: ремонт розпочато
+  if (order.status === 'waiting_approval') return started
+    ? 'Ви відмовилися від доплати. Майстер завершить ремонт у погодженому раніше обсязі.'
+    : 'Кошторис відхилено. Майстер уточнить перелік робіт і зв’яжеться з вами.'
+  if (order.status === 'in_repair' && order.client_approval_status === 'pending')
+    return 'Під час ремонту знайдено ще несправність. Майстер готує кошторис доплати: без вашої згоди додаткові роботи не виконуються.'
+  if (order.status === 'in_repair' && order.client_approval_status === 'rejected')
+    return 'Ремонт триває в погодженому раніше обсязі.'
   if (order.status === 'ready_for_pickup') {
     const due = Number(order.total_cost) - Number(order.paid_amount)
     const pay = due > 0 ? `До сплати ${money(due)}. ` : 'Оплату отримано. '

@@ -42,6 +42,9 @@ def _write(ws, row_idx, values, header=False):
                 cell.number_format = DATE
             elif isinstance(value, str):
                 cell.number_format = "@"  # телефони й серійні номери лишаються текстом, без 3,81E+11
+        if isinstance(value, str) and value.startswith("="):
+            # openpyxl записує рядок «=...» як формулу; ім'я клієнта «=HYPERLINK(...)» має лишитися текстом
+            cell.data_type = "s"
 
 def table_sheet(wb, title, header, rows, widths=None):
     ws = wb.create_sheet(title[:31])

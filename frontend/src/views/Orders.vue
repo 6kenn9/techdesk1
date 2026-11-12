@@ -64,8 +64,8 @@ const tabs = [
   [
     "pickup",
     "До видачі",
-    (o) => o.status === "ready_for_pickup",
-    "Ремонт завершено, пристрій чекає видачі або відправки.",
+    (o) => o.status === "ready_for_pickup" || o.status === "cancelled",
+    "Пристрій чекає видачі або відправки: відремонтований чи повернення після скасування.",
   ],
   ["free", "Вільні", (o) => workState(o) === "free", "Заявки без майстра."],
   ["late", "Затримані", isLate, "Стоять на етапі довше за норму."],
@@ -79,7 +79,7 @@ const tabs = [
     "archive",
     "Архів",
     (o) => workState(o) === "archive",
-    "Завершені та скасовані заявки.",
+    "Завершені заявки та пристрої, повернуті клієнту.",
   ],
 ];
 const tabKeys = tabs.map(([key]) => key);
@@ -280,7 +280,7 @@ onMounted(async () => {
       <template v-for="(name, key) in statuses" :key="key">
         <section
           v-if="
-            !['completed', 'cancelled', 'returned'].includes(key) ||
+            !['completed', 'returned'].includes(key) ||
             quick === 'archive' ||
             filters.status === key
           "

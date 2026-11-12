@@ -6,7 +6,7 @@ from fastapi import APIRouter
 from sqlalchemy import and_, func, or_, select
 from ..core.security import Admin, Db, fail
 from ..models.models import Device, Order, OrderPart, Part, Payment, User, now
-from ..services.domain import ACTIVE, LABELS, local_date, preload, stage_started
+from ..services.domain import ACTIVE, CLOSED, LABELS, local_date, preload, repair_started, stage_started
 
 STALE_DAYS = 3
 APPROVAL_WAIT_DAYS = 2
@@ -40,37 +40,47 @@ def dashboard(db: Db, user: Admin, start: date | None = None, end: date | None =
     def in_period(value):
         day = local_date(value)
         return (not start or day >= start) and (not end or day <= end)
-    finished = [o for o in all_orders if o.status == "completed" and o.completed_at and in_period(o.completed_at)]
+    # Гроші рахуються за закритими заявками: завершеними та повернутими клієнту без звичайної видачі.
+    closed = [o for o in all_orders if o.status in CLOSED and o.completed_at and in_period(o.completed_at)]
+    finished = [o for o in closed if o.status == "completed"]  # кількість ремонтів, середній чек, оцінки
     intake = [o for o in all_orders if in_period(o.created_at)]
-    completed_ids = [o.id for o in all_orders if o.status == "completed"]
+    closed_ids = [o.id for o in all_orders if o.status in CLOSED]
     costs = dict(db.execute(select(OrderPart.order_id, func.sum(OrderPart.unit_cost_price * OrderPart.quantity))
-                            .where(OrderPart.order_id.in_(completed_ids)).group_by(OrderPart.order_id)).all()) if completed_ids else {}
-    revenue = sum((o.total_cost for o in finished), Decimal(0))
-    cost = sum((costs.get(o.id, 0) for o in finished), Decimal(0))
+                            .where(OrderPart.order_id.in_(closed_ids)).group_by(OrderPart.order_id)).all()) if closed_ids else {}
+    def income(order):
+        """Завершена — уся сума замовлення; повернута — лише те, що клієнт фактично сплатив."""
+        return order.total_cost if order.status == "completed" else order.paid_amount
+    def parts_cost(order):
+        # Повернута до початку ремонту: зарезервовані деталі повернулися на склад, витрат немає.
+        # Повернута після початку ремонту: встановлені деталі списано — це витрата сервісу.
+        return costs.get(order.id, 0) if order.status == "completed" or repair_started(order) else 0
+    revenue = sum((income(o) for o in closed), Decimal(0))
+    cost = sum((parts_cost(o) for o in closed), Decimal(0))
+    repairs_revenue = sum((o.total_cost for o in finished), Decimal(0))
     daily = defaultdict(lambda: {"revenue": Decimal(0), "parts_cost": Decimal(0), "profit": Decimal(0)})
-    for order in finished:
+    for order in closed:
         day = daily[str(local_date(order.completed_at))]
-        part_cost = costs.get(order.id, 0)
-        day["revenue"] += order.total_cost
-        day["parts_cost"] += part_cost
-        day["profit"] += order.total_cost - part_cost
+        day["revenue"] += income(order)
+        day["parts_cost"] += parts_cost(order)
+        day["profit"] += income(order) - parts_cost(order)
     previous = None
     if start and end:
         length = (end - start).days + 1
         prev_start, prev_end = start - timedelta(days=length), start - timedelta(days=1)
-        prev_finished = [o for o in all_orders if o.status == "completed" and o.completed_at
-                         and prev_start <= local_date(o.completed_at) <= prev_end]
-        prev_revenue = sum((o.total_cost for o in prev_finished), Decimal(0))
-        prev_cost = sum((costs.get(o.id, 0) for o in prev_finished), Decimal(0))
+        prev_closed = [o for o in all_orders if o.status in CLOSED and o.completed_at
+                       and prev_start <= local_date(o.completed_at) <= prev_end]
+        prev_finished = [o for o in prev_closed if o.status == "completed"]
+        prev_revenue = sum((income(o) for o in prev_closed), Decimal(0))
+        prev_cost = sum((parts_cost(o) for o in prev_closed), Decimal(0))
         previous = {"start": prev_start, "end": prev_end, "revenue": prev_revenue, "parts_cost": prev_cost,
                     "profit": prev_revenue - prev_cost, "completed": len(prev_finished),
-                    "average": round(prev_revenue / len(prev_finished), 2) if prev_finished else 0}
+                    "average": round(sum((o.total_cost for o in prev_finished), Decimal(0)) / len(prev_finished), 2) if prev_finished else 0}
     statuses = Counter(order.status for order in intake)
     methods = {"cash": Decimal(0), "card": Decimal(0), "transfer": Decimal(0)}
-    finished_ids = [o.id for o in finished]
-    if finished_ids:
+    paid_ids = [o.id for o in closed]
+    if paid_ids:
         for method, amount in db.execute(select(Payment.method, func.sum(Payment.amount))
-                                         .where(Payment.order_id.in_(finished_ids)).group_by(Payment.method)):
+                                         .where(Payment.order_id.in_(paid_ids)).group_by(Payment.method)):
             methods[method] = amount
     rated = [o for o in finished if o.rating is not None]
     def average_rating(items):
@@ -87,7 +97,7 @@ def dashboard(db: Db, user: Admin, start: date | None = None, end: date | None =
                               for o in sorted(rated, key=lambda o: o.rated_at, reverse=True)[:5]]},
         "revenue": revenue, "parts_cost": cost, "profit": revenue - cost,
         "active": sum(o.status in ACTIVE for o in all_orders),
-        "average": round(revenue / len(finished), 2) if finished else 0,
+        "average": round(repairs_revenue / len(finished), 2) if finished else 0,  # середній чек завершеного ремонту
         "daily": [dict(values, date=day) for day, values in sorted(daily.items())],
         "statuses": {LABELS[stage]: statuses[stage] for stage in LABELS},
         "categories": dict(Counter(device_categories[order.device_id] for order in intake)),
@@ -95,7 +105,7 @@ def dashboard(db: Db, user: Admin, start: date | None = None, end: date | None =
             {"id": master.id, "name": master.full_name, "specialization": master.specialization,
              "active": sum(o.master_id == master.id and o.status in ACTIVE for o in all_orders),
              "completed": sum(o.master_id == master.id for o in finished),
-             "revenue": sum(o.total_cost for o in finished if o.master_id == master.id),
+             "revenue": sum(income(o) for o in closed if o.master_id == master.id),
              "rating": average_rating([o for o in rated if o.master_id == master.id])}
             for master in db.scalars(select(User).where(User.role == "master").order_by(User.full_name))
         ],

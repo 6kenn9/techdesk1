@@ -20,7 +20,7 @@ import TelegramConnect from "./components/TelegramConnect.vue";
 import ThemeToggle from "./components/ThemeToggle.vue";
 import NotificationBell from "./components/NotificationBell.vue";
 import { useSession } from "./state";
-import { api } from "./api";
+import { api, watchToken } from "./api";
 import { roles, workload } from "./domain";
 
 const session = useSession();
@@ -63,6 +63,7 @@ function expire() {
 }
 onMounted(() => {
   window.addEventListener("techdesk-expired", expire);
+  watchToken();
   refreshTodo();
   todoTimer = setInterval(refreshTodo, 60000);
 });

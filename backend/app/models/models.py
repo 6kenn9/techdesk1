@@ -38,6 +38,8 @@ class User(Base):
     # зміна пароля збільшує версію, і всі раніше видані токени входу стають недійсними
     token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # вхід через Google пов'язано з кабінетом: кабінет створено через Google або власник один раз підтвердив пароль
+    google_linked: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_at: Mapped[datetime] = timestamp()
 
 class ModelPreset(Base):

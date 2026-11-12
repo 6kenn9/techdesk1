@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { api } from './api'
+import { api, clearToken, getToken, setToken } from './api'
 
 export const useSession = defineStore('session', {
   state: () => ({ user: null, loaded: false, notice: '', noticeType: 'success', filters: {} }),
@@ -11,7 +11,7 @@ export const useSession = defineStore('session', {
   actions: {
     async restore() {
       if (this.loaded) return
-      if (sessionStorage.getItem('techdesk-token')) {
+      if (getToken()) {
         try { this.user = await api('/auth/me') } catch { this.clear() }
       }
       this.loaded = true
@@ -20,12 +20,12 @@ export const useSession = defineStore('session', {
       await this.accept(await api('/auth/' + path, { method: 'POST', data }))
     },
     async accept(response) {
-      sessionStorage.setItem('techdesk-token', response.access_token)
+      setToken(response.access_token)
       this.user = response.user
       this.loaded = true
     },
     clear() {
-      sessionStorage.removeItem('techdesk-token')
+      clearToken()
       this.user = null
       this.filters = {}
     },

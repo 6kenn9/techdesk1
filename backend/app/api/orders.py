@@ -3,6 +3,7 @@ from sqlalchemy import func, or_, select
 from ..core.security import Current, Db, Staff, fail
 import csv
 import io
+import re
 from datetime import date as day_type
 from decimal import Decimal
 from fastapi import Response
@@ -45,10 +46,19 @@ def list_orders(db: Db, user: Current, q: str = Query("", max_length=160), statu
 def money_text(value):
     return f"{Decimal(value or 0):.2f}".replace(".", ",")  # Excel з українськими налаштуваннями чекає кому
 
+SAFE_SIGNED = re.compile(r"[+-][\d\s().,-]*")  # телефон +380…, від'ємна сума «-120,50» — не формула
+
+def csv_cell(value):
+    """Excel виконує клітинку CSV, що починається з = + - @, як формулу (ім'я клієнта «=HYPERLINK(...)»).
+    Такий текст отримує апостроф попереду, а телефони й числа лишаються як є."""
+    if isinstance(value, str) and value[:1] in ("=", "@", "\t", "\r", "+", "-") and not SAFE_SIGNED.fullmatch(value):
+        return "'" + value
+    return value
+
 def csv_response(rows, filename):
     """CSV для Excel: UTF-8 з BOM (кирилиця відкривається без «кракозябр») і роздільник «;»."""
     buffer = io.StringIO()
-    csv.writer(buffer, delimiter=";", lineterminator="\r\n").writerows(rows)
+    csv.writer(buffer, delimiter=";", lineterminator="\r\n").writerows([csv_cell(value) for value in row] for row in rows)
     return Response(("\ufeff" + buffer.getvalue()).encode("utf-8"), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 

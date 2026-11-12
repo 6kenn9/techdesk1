@@ -21,7 +21,7 @@ const notCollected = computed(
     <div class="order-card-top">
       <strong class="mono">{{ item.order_number }}</strong>
       <span
-        v-if="!['completed', 'cancelled', 'returned'].includes(item.status)"
+        v-if="!['completed', 'returned'].includes(item.status)"
         class="age"
         :class="{ stale }"
         :title="'На етапі ' + ageLabel(item.stage_since)"

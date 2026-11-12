@@ -32,6 +32,17 @@ def test_order_total():
     assert order_total(Decimal("750.00"), Decimal("2499.50")) == Decimal("3249.50")
     assert order_total(Decimal("750.00"), Decimal("2499.50"), warranty_case=True) == 0
 
+def test_exports_do_not_run_formulas():
+    from openpyxl import Workbook
+    from app.api.orders import csv_cell
+    from app.services.excel import table_sheet
+    assert csv_cell('=HYPERLINK("http://x","клік")') == '\'=HYPERLINK("http://x","клік")'
+    assert csv_cell("@SUM(A1)").startswith("'") and csv_cell("-2+3+cmd|' /C calc'!A0").startswith("'")
+    assert csv_cell("+380501234567") == "+380501234567" and csv_cell("-120,50") == "-120,50"
+    assert csv_cell("Іван Петренко") == "Іван Петренко" and csv_cell(42) == 42
+    sheet = table_sheet(Workbook(), "Заявки", ["Клієнт"], [['=HYPERLINK("http://x","клік")']])
+    assert sheet["A2"].data_type == "s"  # текст, а не формула
+
 def test_rate_limiter_window():
     moment = [0.0]
     limiter = RateLimiter(limit=2, window=60, clock=lambda: moment[0])

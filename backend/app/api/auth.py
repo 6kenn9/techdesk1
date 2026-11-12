@@ -66,13 +66,27 @@ def google_login(payload: GoogleLogin, db: Db, request: Request):
     if user:
         if not user.is_active:
             fail(401, "Обліковий запис вимкнено адміністратором.")
+        if not user.google_linked:
+            # Пошту під час реєстрації не підтверджують, тож кабінет на цю адресу міг створити хтось інший.
+            # Тому Google не впускає в наявний кабінет автоматично: власник один раз підтверджує пароль.
+            if not payload.password:
+                return {"needs_password": True, "email": email}
+            password_key = (client_ip(request), email)
+            if login_failures.blocked(password_key):
+                fail(429, "Забагато невдалих спроб входу. Спробуйте через 5 хвилин.")
+            if not verify(payload.password, user.password_hash):
+                login_failures.hit(password_key)
+                fail(401, "Неправильний пароль. Якщо ви не реєструвалися з цією поштою, зверніться до сервісного центру.")
+            login_failures.reset(password_key)
+            user.google_linked = True
+            db.commit()
     else:
         if not payload.phone:
             return {"needs_phone": True, "email": email, "full_name": claims.get("name") or email.split("@")[0]}
         if db.scalar(select(User.id).where(User.phone == payload.phone)):
             fail(409, "Цей телефон уже зареєстровано.")
         user = User(full_name=(claims.get("name") or email.split("@")[0])[:150], email=email, phone=payload.phone,
-                    role="client", password_hash=hasher.hash(secrets.token_urlsafe(32)))
+                    role="client", password_hash=hasher.hash(secrets.token_urlsafe(32)), google_linked=True)
         db.add(user)
         db.commit()
     return {"access_token": token(user), "user": public_user(user)}

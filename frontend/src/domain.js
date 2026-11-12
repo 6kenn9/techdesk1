@@ -51,12 +51,14 @@ export const ageLabel = value => { const days = daysSince(value); return days ==
 export const STALE_DAYS = 3
 // Готовий пристрій, який не забирають, потребує нагадування клієнту.
 export const PICKUP_DAYS = 5
-export const isClosed = order => ['completed', 'cancelled', 'returned'].includes(order.status)
+// Скасована заявка не закрита: пристрій ще в сервісі й чекає повернення клієнту.
+export const isClosed = order => ['completed', 'returned'].includes(order.status)
 // Стан роботи: у кого зараз «м’яч».
 //   free — майстра ще немає; todo — наступний крок за майстром; client — чекаємо рішення клієнта щодо кошторису;
 //   pickup — пристрій готовий і чекає, поки клієнт його забере; archive — заявку закрито.
 export function workState(order) {
   if (isClosed(order)) return 'archive'
+  if (order.status === 'cancelled') return 'pickup'
   if (!order.master_id) return 'free'
   if (order.status === 'waiting_approval') return order.client_approval_status === 'pending' ? 'client' : 'todo'
   if (order.status === 'ready_for_pickup') return order.delivery_method === 'nova_poshta' ? 'todo' : 'pickup'
@@ -72,6 +74,7 @@ export const todoSteps = [
 export function todoStep(order) {
   if (order.status === 'registered') return 'diagnose'
   if (order.status === 'diagnostics' || (order.status === 'waiting_approval' && order.client_approval_status === 'rejected')) return 'estimate'
+  if (order.status === 'in_repair' && order.client_approval_status !== 'approved') return 'estimate'
   if (order.status === 'ready_for_pickup') return 'ship'
   return 'repair'
 }

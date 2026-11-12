@@ -1,5 +1,24 @@
+// Сеанс зберігається для всього браузера: посилання з Telegram, QR-код квитанції й нагадування
+// відкриваються в новій вкладці, і користувач не мусить входити щоразу. Строк дії токена — 8 годин.
+const TOKEN_KEY = 'techdesk-token'
+export function getToken() {
+  try { return localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY) } catch { return null }
+}
+export function setToken(value) {
+  try { localStorage.setItem(TOKEN_KEY, value); sessionStorage.removeItem(TOKEN_KEY) }
+  catch { try { sessionStorage.setItem(TOKEN_KEY, value) } catch { /* сховище недоступне: сеанс до перезавантаження */ } }
+}
+export function clearToken() {
+  try { localStorage.removeItem(TOKEN_KEY) } catch { /* недоступне */ }
+  try { sessionStorage.removeItem(TOKEN_KEY) } catch { /* недоступне */ }
+}
+// Вхід, вихід чи зміна пароля в іншій вкладці: ця вкладка перезавантажується з актуальним сеансом.
+export function watchToken() {
+  window.addEventListener('storage', event => { if (event.key === TOKEN_KEY) location.reload() })
+}
+
 export async function api(path, { method = 'GET', data, blob = false } = {}) {
-  const token = sessionStorage.getItem('techdesk-token')
+  const token = getToken()
   const headers = token ? { Authorization: 'Bearer ' + token } : {}
   const form = data instanceof FormData
   if (data !== undefined && !form) headers['Content-Type'] = 'application/json'
@@ -11,8 +30,8 @@ export async function api(path, { method = 'GET', data, blob = false } = {}) {
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
-    if (response.status === 401 && token && token === sessionStorage.getItem('techdesk-token') && !path.startsWith('/auth/login') && !path.startsWith('/auth/google')) {
-      sessionStorage.removeItem('techdesk-token')
+    if (response.status === 401 && token && token === getToken() && !path.startsWith('/auth/login') && !path.startsWith('/auth/google')) {
+      clearToken()
       window.dispatchEvent(new Event('techdesk-expired'))
     }
     throw new Error(typeof body.detail === 'string' ? body.detail : 'Операцію не виконано. Спробуйте ще раз.')

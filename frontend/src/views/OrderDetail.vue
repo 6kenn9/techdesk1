@@ -231,6 +231,11 @@ const hero = computed(() => {
     else if (started.value) { title = 'Потрібна згода на доплату'; text = `Під час ремонту виявлено ще несправність. Нова сума ${money(o.total_cost)}, раніше погоджено ${money(o.approved_total)}. Без вашої згоди додаткові роботи не виконуватимуться.` }
     else text = `Ремонт коштуватиме ${money(o.total_cost)}. Перегляньте кошторис нижче: без вашої згоди роботи не почнуться.`
   }
+  if (o.status === 'in_repair' && o.client_approval_status === 'pending') {
+    title = 'Ремонт призупинено'; icon = CircleDollarSign; tone = 'warn'
+    text = 'Під час ремонту знайдено ще несправність. Майстер надішле кошторис доплати на погодження; без вашої згоди додаткові роботи не виконуються.'
+  }
+  if (o.status === 'in_repair' && o.client_approval_status === 'rejected') text = `Ремонт триває в погодженому раніше обсязі (${money(o.approved_total)}).`
   if (o.status === 'ready_for_pickup') {
     const pay = due.value > 0 ? `До сплати ${money(due.value)}. ` : 'Оплату отримано. '
     if (!shipping.value) text = pay + 'Заберіть пристрій, назвавши номер заявки.'

@@ -354,7 +354,9 @@ def test_analytics_and_jsonb(client, identities):
     analytics = request(client, admin, "GET", "/analytics/dashboard")
     orders = request(client, admin, "GET", "/orders")
     done = [order for order in orders if order["status"]=="completed"]
-    assert analytics["revenue"] == sum(order["total_cost"] for order in done)
+    returned = [order for order in orders if order["status"]=="returned"]
+    # виручка: повна сума завершених ремонтів і фактичні оплати за повернутими без видачі
+    assert analytics["revenue"] == sum(order["total_cost"] for order in done) + sum(order["paid_amount"] for order in returned)
     assert analytics["profit"] == analytics["revenue"] - analytics["parts_cost"]
     assert sum(m["completed"] for m in analytics["staff"]) == len(done)
     assert analytics["active"] == len([o for o in orders if o["status"] not in ("completed","cancelled","returned")])
@@ -787,9 +789,14 @@ def test_google_login(client, identities, monkeypatch):
     assert again["user"]["id"] == created["user"]["id"]
     headers = {"Authorization": "Bearer " + again["access_token"]}
     assert request(client, headers, "GET", "/auth/me")["email"] == "newbie@gmail.com"
-    # існуючий кабінет за e-mail з Google
+    # наявний кабінет за e-mail: Google не впускає автоматично, власник один раз підтверджує пароль
     admin, admin_user = identities["admin"]
     claims["email"] = admin_user["email"]
+    assert request(client, {}, "POST", "/auth/google", {"credential": token})["needs_password"] is True
+    request(client, {}, "POST", "/auth/google", {"credential": token, "password": "wrong-password"}, 401)
+    linked = request(client, {}, "POST", "/auth/google", {"credential": token, "password": "admin123"})
+    assert linked["user"]["id"] == admin_user["id"]
+    # далі вхід через Google працює без пароля
     assert request(client, {}, "POST", "/auth/google", {"credential": token})["user"]["id"] == admin_user["id"]
     # непідтверджена пошта відхиляється самою перевіркою, вимкнений акаунт — тут
     claims["email"] = "newbie@gmail.com"
@@ -864,9 +871,13 @@ def test_return_device_without_repair(client, identities):
     # готовий пристрій, за який клієнт відмовився платити
     other = to_repair(client, admin, customer, device["id"], price="100.00")
     request(client, admin, "PATCH", other+"/status", {"status": "ready_for_pickup"})
+    revenue_before = Decimal(str(request(client, admin, "GET", "/analytics/dashboard")["revenue"]))
+    request(client, admin, "POST", other+"/payments", {"amount": "40.00", "method": "cash"}, 201)  # часткова оплата
     request(client, admin, "PATCH", other+"/status", {"status": "returned"}, 422)  # потрібна причина
     done = request(client, admin, "PATCH", other+"/status", {"status": "returned", "comment": "Клієнт відмовився платити"})
     assert done["status"] == "returned" and done["warranty_expires_at"] is None
+    # отримані гроші за повернутою заявкою потрапляють у виручку
+    assert Decimal(str(request(client, admin, "GET", "/analytics/dashboard")["revenue"])) - revenue_before == Decimal("40")
     assert client.get("/api/track", params={"code": done["order_number"]}).json()["label"] == "Повернуто клієнту"
 
 def test_one_open_order_numbering_and_admin_approval(client, identities):

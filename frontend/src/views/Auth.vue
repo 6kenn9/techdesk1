@@ -20,6 +20,9 @@ const googleButton = ref(null);
 const googleCredential = ref("");
 const googlePhone = ref("");
 const googleName = ref("");
+// Кабінет із цією поштою вже є: власник один раз підтверджує пароль, щоб пов’язати з ним вхід через Google.
+const googlePassword = ref("");
+const googleLinkEmail = ref("");
 async function finish() {
   const next = route.query.next;
   await router.push(
@@ -34,9 +37,14 @@ async function sendGoogle() {
   try {
     const data = { credential: googleCredential.value };
     if (googlePhone.value) data.phone = googlePhone.value;
+    if (googlePassword.value) data.password = googlePassword.value;
     const response = await api("/auth/google", { method: "POST", data });
     if (response.needs_phone) {
       googleName.value = response.full_name;
+      return;
+    }
+    if (response.needs_password) {
+      googleLinkEmail.value = response.email;
       return;
     }
     await session.accept(response);
@@ -51,6 +59,8 @@ function onGoogle(response) {
   googleCredential.value = response.credential;
   googlePhone.value = "";
   googleName.value = "";
+  googlePassword.value = "";
+  googleLinkEmail.value = "";
   sendGoogle();
 }
 function loadGoogle() {
@@ -209,6 +219,29 @@ async function submit() {
             </label>
             <button class="button primary wide" :disabled="busy">
               Завершити реєстрацію
+              <ArrowRight :size="17" />
+            </button>
+          </form>
+          <form
+            v-else-if="googleLinkEmail"
+            class="form-stack"
+            @submit.prevent="sendGoogle()"
+          >
+            <p class="muted">
+              Кабінет із поштою {{ googleLinkEmail }} уже існує. Щоб надалі входити через Google,
+              один раз підтвердьте його пароль.
+            </p>
+            <label>
+              Пароль кабінету
+              <input
+                v-model="googlePassword"
+                autocomplete="current-password"
+                type="password"
+                required
+              />
+            </label>
+            <button class="button primary wide" :disabled="busy">
+              Пов’язати й увійти
               <ArrowRight :size="17" />
             </button>
           </form>

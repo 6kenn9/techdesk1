@@ -1,7 +1,7 @@
 <script setup>
 import { computed, reactive, ref } from 'vue'
 import { KeyRound } from 'lucide-vue-next'
-import { api } from '../api'
+import { api, setToken } from '../api'
 import { roles } from '../domain'
 import { useSession } from '../state'
 import TelegramConnect from '../components/TelegramConnect.vue'
@@ -17,7 +17,7 @@ async function change() {
   busy.value = true
   try {
     const result = await api('/auth/password', { method: 'POST', data: { current_password: form.current_password, new_password: form.new_password } })
-    sessionStorage.setItem('techdesk-token', result.access_token)
+    setToken(result.access_token)
     session.user = result.user
     Object.assign(form, { current_password: '', new_password: '', repeat: '' })
     session.notify('Пароль змінено. На інших пристроях потрібно буде увійти знову.')
