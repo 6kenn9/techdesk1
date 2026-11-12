@@ -3,13 +3,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from sqlalchemy import or_, select, text
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from .api import analytics, auth, inbox, intake, orders, passports, pdf_generator, warehouse
 from .core.config import DEMO_MODE, TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_USERNAME
 from .core.database import SessionLocal
 from .core.security import Db, RateLimiter, fail, throttle
-from .models.models import Device, Order
+from .models.models import Order
 from .services.domain import LABELS
 
 # Повідомлення програми (зокрема про запуск Telegram-бота) видно в docker compose logs backend.
@@ -56,11 +56,12 @@ tracking = RateLimiter(limit=30, window=60)
 
 @app.get("/api/track", dependencies=[throttle(tracking, "track")])
 def track(code: str, db: Db):
+    # Лише за номером заявки: серійний номер надруковано на корпусі й наліпці, тож за ним сторонній
+    # міг би дізнатися, що пристрій зараз у сервісі.
     value = code.strip().upper()
     if not 2 <= len(value) <= 80:
-        fail(422, "Введіть номер заявки або серійний номер.")
-    order = db.scalar(select(Order).join(Device, Device.id == Order.device_id).where(
-        or_(Order.order_number == value, Device.serial_number == value)).order_by(Order.id.desc()).limit(1))
+        fail(422, "Введіть номер заявки.")
+    order = db.scalar(select(Order).where(Order.order_number == value))
     if not order:
         fail(404, "Заявку за цим номером не знайдено.")
     return {"status": order.status, "label": LABELS[order.status]}

@@ -1,6 +1,7 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
+from itertools import count
 
 import pytest
 from alembic import command
@@ -56,6 +57,23 @@ def new_order(client, headers, device_id, **extra):
     return request(client, headers, "POST", "/orders", {"device_id":device_id,
                    "problem_description":"Потрібна перевірка і ремонт.", **extra}, 201)
 
+_devices = count(1)
+
+def fresh_device(client, admin, owner_id, **extra):
+    """Окремий пристрій для тесту: на один пристрій дозволено лише одну відкриту заявку."""
+    return request(client, admin, "POST", "/passports", {"serial_number": f"test-dev-{next(_devices):03d}", "owner_id": owner_id,
+                   "device_category": "Ноутбук", "brand": "Test", "model": "Тестовий", **extra}, 201)
+
+def finish(client, staff, path, amount):
+    request(client, staff, "PATCH", path+"/status", {"status": "ready_for_pickup"})
+    request(client, staff, "POST", path+"/payments", {"amount": amount, "method": "cash"}, 201)
+    return request(client, staff, "PATCH", path+"/status", {"status": "completed"})
+
+def device_with_warranty(client, admin, customer, owner_id):
+    device = fresh_device(client, admin, owner_id)
+    finish(client, admin, to_repair(client, admin, customer, device["id"], price="100.00"), "100.00")
+    return device
+
 def test_auth_and_permissions(client, identities):
     admin, admin_user = identities["admin"]
     customer, _ = identities["client"]
@@ -83,17 +101,16 @@ def test_preset_passport_and_warranty(client, identities):
     assert lookup["id"] == device["id"]
     assert lookup["specifications"] == preset["default_specs"]
     request(client, other, "GET", f"/passports/{device['id']}", status=404)
-    devices = request(client, customer, "GET", "/passports")
-    existing = next(item for item in devices if item["warranty"])
+    existing = device_with_warranty(client, admin, customer, owner["id"])
     assert new_order(client, admin, existing["id"], is_warranty_case=True)["active_warranty"]["order_number"]
     assert len(request(client, admin, "GET", "/passports/presets")) >= 12
 
 def test_repair_lifecycle_and_pdf(client, identities):
     admin, _ = identities["admin"]
     master, worker = identities["master"]
-    customer, _ = identities["client"]
+    customer, owner = identities["client"]
     other, _ = identities["other"]
-    device = request(client, customer, "GET", "/passports?q=TD-ASU-10482")[0]
+    device = fresh_device(client, admin, owner["id"])
     order = new_order(client, admin, device["id"], master_id=worker["id"])
     path = f"/orders/{order['id']}"
     request(client, other, "GET", path, status=404)
@@ -134,9 +151,8 @@ def test_repair_lifecycle_and_pdf(client, identities):
 
 def test_inventory_concurrent_reservation_and_return(client, identities):
     admin, _ = identities["admin"]
-    customer, _ = identities["client"]
-    device = request(client, customer, "GET", "/passports")[0]
-    orders = [new_order(client, admin, device["id"]) for _ in range(2)]
+    customer, owner = identities["client"]
+    orders = [new_order(client, admin, fresh_device(client, admin, owner["id"])["id"]) for _ in range(2)]
     part = request(client, admin, "POST", "/warehouse/parts", {
         "sku":"TEST-CONCURRENT", "name":"Деталь для тесту", "category":"Тестова", "quantity_in_stock":1,
         "cost_price":"40.00", "sale_price":"70.00"
@@ -166,10 +182,10 @@ def to_repair(client, staff, customer, device_id, part_id=None, price="100.00", 
             "estimate_version":estimate["estimate_version"]})
     return path
 
-def test_cancel_during_repair_returns_parts(client, identities):
+def test_cancel_during_repair_keeps_installed_parts(client, identities):
     admin, _ = identities["admin"]
-    customer, _ = identities["client"]
-    device = request(client, customer, "GET", "/passports")[0]
+    customer, owner = identities["client"]
+    device = fresh_device(client, admin, owner["id"])
     part = request(client, admin, "POST", "/warehouse/parts", {
         "sku":"TEST-CANCEL", "name":"Деталь для скасування", "category":"Тестова", "quantity_in_stock":2,
         "cost_price":"10.00", "sale_price":"20.00"}, 201)
@@ -178,12 +194,17 @@ def test_cancel_during_repair_returns_parts(client, identities):
     request(client, admin, "PATCH", path+"/status", {"status":"cancelled"}, 422)
     cancelled = request(client, admin, "PATCH", path+"/status", {"status":"cancelled", "comment":"Клієнт забрав пристрій"})
     assert cancelled["status"] == "cancelled"
-    assert request(client, admin, "GET", "/warehouse/parts?q=TEST-CANCEL")[0]["quantity_in_stock"] == 2
+    # ремонт уже почався: встановлена деталь не повертається на склад
+    assert request(client, admin, "GET", "/warehouse/parts?q=TEST-CANCEL")[0]["quantity_in_stock"] == 1
+    # скасований пристрій ще в сервісі — закриваємо заявку, коли його віддали
+    returned = request(client, admin, "PATCH", path+"/status", {"status":"returned"})
+    assert returned["status"] == "returned" and returned["completed_at"] and returned["warranty_expires_at"] is None
+    request(client, admin, "PATCH", path+"/status", {"status":"cancelled"}, 409)
 
 def test_completion_requires_payment(client, identities):
     admin, _ = identities["admin"]
-    customer, _ = identities["client"]
-    device = request(client, customer, "GET", "/passports")[0]
+    customer, owner = identities["client"]
+    device = fresh_device(client, admin, owner["id"])
     path = to_repair(client, admin, customer, device["id"], price="300.00")
     request(client, admin, "PATCH", path+"/status", {"status":"ready_for_pickup"})
     request(client, admin, "PATCH", path+"/status", {"status":"completed"}, 409)
@@ -198,7 +219,7 @@ def test_warranty_case_is_free_for_client(client, identities):
         "brand":"Test","model":"Без гарантії"}, 201)
     request(client, admin, "POST", "/orders", {"device_id":fresh["id"], "problem_description":"Не вмикається.",
             "is_warranty_case":True}, 422)
-    covered = next(item for item in request(client, customer, "GET", "/passports") if item["warranty"])
+    covered = device_with_warranty(client, admin, customer, owner["id"])
     order = new_order(client, admin, covered["id"], is_warranty_case=True)
     path = f"/orders/{order['id']}"
     request(client, admin, "PATCH", path+"/status", {"status":"diagnostics"}, 409)
@@ -266,7 +287,7 @@ def test_telegram_notifications_and_approval(client, identities, telegram_bot):
     assert "недійсне" in fake.sent(7002)[-1]["text"]
     link_telegram(client, bot, master, 7100)
 
-    device = request(client, customer, "GET", "/passports")[0]
+    device = fresh_device(client, admin, identities["client"][1]["id"])
     order = new_order(client, admin, device["id"], master_id=worker["id"])
     path = f"/orders/{order['id']}"
     assert "Заявку прийнято" in fake.sent(7001)[-1]["text"]
@@ -305,7 +326,7 @@ def test_device_photos_and_label(client, identities):
     admin, _ = identities["admin"]
     customer, _ = identities["client"]
     other, _ = identities["other"]
-    device = request(client, customer, "GET", "/passports")[0]
+    device = fresh_device(client, admin, identities["client"][1]["id"])
     base = f"/api/passports/{device['id']}/photos"
     upload = lambda headers, payload, **data: client.post(base, headers=headers, files={"file": payload}, data=data)
     response = upload(admin, ("front.png", image_bytes(), "image/png"), caption="Подряпина на кришці")
@@ -336,7 +357,7 @@ def test_analytics_and_jsonb(client, identities):
     assert analytics["revenue"] == sum(order["total_cost"] for order in done)
     assert analytics["profit"] == analytics["revenue"] - analytics["parts_cost"]
     assert sum(m["completed"] for m in analytics["staff"]) == len(done)
-    assert analytics["active"] == len([o for o in orders if o["status"] not in ("completed","cancelled")])
+    assert analytics["active"] == len([o for o in orders if o["status"] not in ("completed","cancelled","returned")])
     assert analytics["previous"] is None
     attention = analytics["attention"]
     assert {"stale", "waiting_approval", "low_stock"} <= set(attention)
@@ -399,9 +420,11 @@ def test_staff_express_intake(client, identities):
     assert first["claim_token"] and first["master_id"] == worker["id"]
     found = request(client, master, "GET", "/users/lookup?phone=%2B380509990011")
     assert found["is_guest"] and found["devices"][0]["serial_number"] == "INTAKE-001"
-    # повторне звернення: наявний пристрій, нового кабінету немає
-    second = request(client, master, "POST", "/orders/intake", {
-        "device_id": found["devices"][0]["id"], "problem_description": "Не заряджається"}, 201)
+    # повторне звернення: наявний пристрій, нового кабінету немає; поки перша заявка відкрита, другу не створити
+    repeat = {"device_id": found["devices"][0]["id"], "problem_description": "Не заряджається"}
+    request(client, master, "POST", "/orders/intake", repeat, 409)
+    request(client, master, "PATCH", f"/orders/{first['id']}/status", {"status": "cancelled"})
+    second = request(client, master, "POST", "/orders/intake", repeat, 201)
     assert second["claim_token"] is None and second["client_id"] == found["id"]
     request(client, master, "POST", "/orders/intake", {"phone": "0509990011", "problem_description": "Помилка"}, 422)
     assert request(client, master, "GET", "/users/lookup?phone=0501110000") is None
@@ -487,7 +510,7 @@ def test_client_cancel_and_staff_notifications(client, identities):
     admin, _ = identities["admin"]
     master, worker = identities["master"]
     customer, person = identities["client"]
-    device = request(client, customer, "GET", "/passports")[0]
+    device = fresh_device(client, admin, identities["client"][1]["id"])
     before_admin, before_master = unread(client, admin)["unread"], unread(client, master)["unread"]
     order = new_order(client, customer, device["id"])  # заявка від клієнта — сповіщення працівникам
     after = unread(client, admin)
@@ -519,11 +542,14 @@ def test_client_cancel_and_staff_notifications(client, identities):
     assert unread(client, master)["items"][0]["read"] is True
     request(client, master, "POST", "/notifications/read", {})
     assert unread(client, master)["unread"] == 0
+    # після відмови від кошторису клієнт може скасувати заявку сам; деталей у кошторисі немає, ремонт не почався
+    dropped = request(client, customer, "POST", f"/orders/{started['id']}/cancel", {"comment": "Дорого"})
+    assert dropped["status"] == "cancelled" and "скасував" in unread(client, master)["items"][0]["text"]
 
 def test_payments_methods_and_csv_export(client, identities):
     admin, _ = identities["admin"]
     customer, _ = identities["client"]
-    device = request(client, customer, "GET", "/passports")[0]
+    device = fresh_device(client, admin, identities["client"][1]["id"])
     path = to_repair(client, admin, customer, device["id"], price="1000.00")
     request(client, admin, "POST", path+"/payments", {"amount": "100.00", "method": "cash"}, 409)  # ще в ремонті
     request(client, admin, "PATCH", path+"/status", {"status": "ready_for_pickup"})
@@ -550,7 +576,7 @@ def test_client_rates_completed_repair(client, identities):
     master, worker = identities["master"]
     customer, _ = identities["client"]
     other, _ = identities["other"]
-    device = request(client, customer, "GET", "/passports")[0]
+    device = fresh_device(client, admin, identities["client"][1]["id"])
     path = to_repair(client, admin, customer, device["id"], price="200.00")
     master_id = request(client, admin, "GET", path)["master_id"]
     request(client, customer, "POST", path+"/rating", {"rating": 5}, 409)  # ще не завершено
@@ -576,7 +602,7 @@ def test_nova_poshta_delivery(client, identities, telegram_bot):
     admin, _ = identities["admin"]
     customer, _ = identities["client"]
     link_telegram(client, bot, customer, 7301)
-    device = request(client, customer, "GET", "/passports")[0]
+    device = fresh_device(client, admin, identities["client"][1]["id"])
     request(client, customer, "POST", "/orders", {"device_id": device["id"], "problem_description": "Не заряджається",
             "delivery": {"method": "nova_poshta", "city": "Львів"}}, 422)  # без відділення
     path = to_repair(client, admin, customer, device["id"], price="500.00",
@@ -602,7 +628,7 @@ def test_nova_poshta_delivery(client, identities, telegram_bot):
 def test_client_changes_delivery_before_shipping(client, identities):
     admin, _ = identities["admin"]
     customer, _ = identities["client"]
-    device = request(client, customer, "GET", "/passports")[0]
+    device = fresh_device(client, admin, identities["client"][1]["id"])
     order = request(client, customer, "POST", "/orders", {"device_id": device["id"], "problem_description": "Шумить вентилятор"}, 201)
     assert order["delivery_method"] == "pickup"
     path = f"/orders/{order['id']}"
@@ -639,7 +665,7 @@ def test_telegram_mute_and_resume(client, identities, telegram_bot):
     admin, _ = identities["admin"]
     customer, _ = identities["client"]
     link_telegram(client, bot, customer, 7701)
-    device = request(client, customer, "GET", "/passports")[0]
+    device = fresh_device(client, admin, identities["client"][1]["id"])
     bot.handle_update(tg_message(7701, "🔕 Вимкнути сповіщення"))
     reply = fake.sent(7701)[-1]
     assert "призупинено" in reply["text"]
@@ -668,7 +694,7 @@ def test_telegram_estimate_term_and_pending_list(client, identities, telegram_bo
     admin, _ = identities["admin"]
     customer, _ = identities["client"]
     link_telegram(client, bot, customer, 7501)
-    device = request(client, customer, "GET", "/passports")[0]
+    device = fresh_device(client, admin, identities["client"][1]["id"])
     master_id = request(client, admin, "GET", "/users?role=master")[0]["id"]
     path = f"/orders/{new_order(client, admin, device['id'], master_id=master_id)['id']}"
     request(client, admin, "PATCH", path+"/status", {"status": "diagnostics"})
@@ -790,3 +816,112 @@ def test_excel_exports(client, identities):
     report = load_workbook(io.BytesIO(client.get("/api/analytics/export.xlsx", headers=admin).content)).active
     assert "Звіт TechDesk" in report["A1"].value
     assert any(row[0].value == "Майстри" for row in report.iter_rows())
+
+def test_extra_work_during_repair(client, identities):
+    """Під час ремонту знайшли ще несправність: доплату погоджує клієнт, відмова не зупиняє погоджений ремонт."""
+    admin, _ = identities["admin"]
+    customer, owner = identities["client"]
+    device = fresh_device(client, admin, owner["id"])
+    path = to_repair(client, admin, customer, device["id"], price="200.00")
+    request(client, admin, "PATCH", path+"/status", {"status": "waiting_approval"}, 409)  # кошторис не змінювався
+    extra = request(client, admin, "POST", path+"/works", {"work_name": "Заміна шлейфу", "price": "150.00"}, 201)
+    assert extra["status"] == "in_repair" and extra["client_approval_status"] == "pending"
+    request(client, admin, "PATCH", path+"/status", {"status": "ready_for_pickup"}, 409)  # доплату не погоджено
+    request(client, admin, "PATCH", path+"/status", {"status": "waiting_approval"})
+    request(client, admin, "PATCH", path+"/status", {"status": "diagnostics"}, 409)  # ремонт уже розпочато
+    estimate = request(client, customer, "GET", path)
+    assert Decimal(str(estimate["approved_total"])) == 200 and Decimal(str(estimate["total_cost"])) == 350
+    refused = request(client, customer, "POST", path+"/approve-cost", {"approved": False, "expected_total": estimate["total_cost"],
+                      "estimate_version": estimate["estimate_version"], "comment": "Лише основний ремонт"})
+    assert refused["client_approval_status"] == "rejected" and Decimal(str(refused["approved_total"])) == 200
+    request(client, customer, "POST", path+"/cancel", {}, 409)  # ремонт уже йде: скасовує лише центр
+    # продовжуємо в погодженому обсязі: додаткову роботу прибрано, згода знову чинна
+    request(client, admin, "PATCH", path+"/status", {"status": "in_repair"})
+    extra_line = next(item for item in refused["works"] if item["work_name"] == "Заміна шлейфу")
+    assert request(client, admin, "DELETE", f"{path}/works/{extra_line['id']}")["client_approval_status"] == "approved"
+    # друга спроба: клієнт погоджує доплату
+    request(client, admin, "POST", path+"/works", {"work_name": "Заміна шлейфу", "price": "150.00"}, 201)
+    request(client, admin, "PATCH", path+"/status", {"status": "waiting_approval"})
+    estimate = request(client, customer, "GET", path)
+    agreed = request(client, customer, "POST", path+"/approve-cost", {"approved": True, "expected_total": estimate["total_cost"],
+                     "estimate_version": estimate["estimate_version"]})
+    assert agreed["status"] == "in_repair" and Decimal(str(agreed["approved_total"])) == 350
+    assert request(client, admin, "PATCH", path+"/status", {"status": "ready_for_pickup"})["status"] == "ready_for_pickup"
+
+def test_return_device_without_repair(client, identities):
+    admin, _ = identities["admin"]
+    customer, owner = identities["client"]
+    device = fresh_device(client, admin, owner["id"])
+    order = new_order(client, admin, device["id"], delivery={"method": "nova_poshta", "city": "Львів", "branch": "Відділення №1"})
+    path = f"/orders/{order['id']}"
+    request(client, admin, "PATCH", path+"/status", {"status": "returned"}, 409)  # спершу скасування
+    request(client, admin, "PATCH", path+"/status", {"status": "cancelled"})
+    request(client, admin, "PATCH", path+"/status", {"status": "returned"}, 409)  # Нова Пошта: потрібна накладна
+    shipped = request(client, admin, "POST", path+"/shipment", {"ttn": "20450000000077"})  # ремонту не було — без оплати
+    assert shipped["delivery_ttn"] == "20450000000077"
+    assert request(client, admin, "PATCH", path+"/status", {"status": "returned"})["status"] == "returned"
+    request(client, customer, "PUT", path+"/delivery", {"method": "pickup"}, 409)
+    # готовий пристрій, за який клієнт відмовився платити
+    other = to_repair(client, admin, customer, device["id"], price="100.00")
+    request(client, admin, "PATCH", other+"/status", {"status": "ready_for_pickup"})
+    request(client, admin, "PATCH", other+"/status", {"status": "returned"}, 422)  # потрібна причина
+    done = request(client, admin, "PATCH", other+"/status", {"status": "returned", "comment": "Клієнт відмовився платити"})
+    assert done["status"] == "returned" and done["warranty_expires_at"] is None
+    assert client.get("/api/track", params={"code": done["order_number"]}).json()["label"] == "Повернуто клієнту"
+
+def test_one_open_order_numbering_and_admin_approval(client, identities):
+    admin, _ = identities["admin"]
+    customer, owner = identities["client"]
+    device = fresh_device(client, admin, owner["id"])
+    first = new_order(client, admin, device["id"])
+    request(client, customer, "POST", "/orders", {"device_id": device["id"], "problem_description": "Ще одна проблема"}, 409)
+    request(client, admin, "PATCH", f"/orders/{first['id']}/status", {"status": "cancelled"})
+    second = new_order(client, admin, device["id"])
+    prefix, number = first["order_number"].rsplit("-", 1)
+    assert second["order_number"] == f"{prefix}-{int(number) + 1:04d}"  # лічильник року, а не id заявки
+    # публічний статус — лише за номером заявки, не за серійним номером із наліпки
+    assert client.get("/api/track", params={"code": device["serial_number"]}).status_code == 404
+    assert client.get("/api/track", params={"code": second["order_number"]}).status_code == 200
+    path = f"/orders/{second['id']}"
+    request(client, admin, "PUT", path, {"master_id": request(client, admin, "GET", "/users?role=master")[0]["id"]})
+    request(client, admin, "PATCH", path+"/status", {"status": "diagnostics"})
+    request(client, admin, "PUT", path, {"diagnostics": "Потрібна чистка."})
+    request(client, admin, "PATCH", path+"/status", {"status": "waiting_approval"}, 409)  # порожній кошторис
+    request(client, admin, "POST", path+"/works", {"work_name": "Чистка", "price": "100.00"}, 201)
+    request(client, admin, "PATCH", path+"/status", {"status": "waiting_approval"})
+    estimate = request(client, admin, "GET", path)
+    by_phone = request(client, admin, "POST", path+"/approve-cost", {"approved": True, "expected_total": estimate["total_cost"],
+                       "estimate_version": estimate["estimate_version"], "comment": "Погодив телефоном"})
+    assert by_phone["status"] == "in_repair"  # так само, як після згоди клієнта в кабінеті
+
+def test_device_owner_transfer(client, identities):
+    admin, _ = identities["admin"]
+    master, _ = identities["master"]
+    customer, owner = identities["client"]
+    other, buyer = identities["other"]
+    device = fresh_device(client, admin, owner["id"])
+    sold = new_order(client, admin, device["id"])
+    transfer = f"/passports/{device['id']}/transfer"
+    request(client, admin, "POST", transfer, {"owner_id": buyer["id"]}, 409)  # відкрита заявка
+    request(client, admin, "PATCH", f"/orders/{sold['id']}/status", {"status": "cancelled"})
+    request(client, master, "POST", transfer, {"owner_id": buyer["id"]}, 403)
+    request(client, admin, "POST", transfer, {"owner_id": owner["id"]}, 409)  # той самий власник
+    moved = request(client, admin, "POST", transfer, {"owner_id": buyer["id"], "reason": "Продав пристрій"})
+    assert moved["owner_id"] == buyer["id"] and moved["spec_history"][0]["field_name"] == "owner"
+    request(client, customer, "GET", f"/passports/{device['id']}", status=404)
+    seen = request(client, other, "GET", f"/passports/{device['id']}")
+    assert seen["spec_history"][0]["old_value"] == "попередній власник" and seen["orders"] == []
+    assert new_order(client, other, device["id"])["client_id"] == buyer["id"]
+
+def test_client_warranty_claim(client, identities):
+    admin, _ = identities["admin"]
+    customer, owner = identities["client"]
+    plain = fresh_device(client, admin, owner["id"])
+    claim = {"problem_description": "Знову не працює", "warranty_claim": True}
+    request(client, customer, "POST", "/orders", dict(claim, device_id=plain["id"]), 422)  # гарантії немає
+    covered = device_with_warranty(client, admin, customer, owner["id"])
+    order = request(client, customer, "POST", "/orders", dict(claim, device_id=covered["id"]), 201)
+    assert order["warranty_claim"] is True and order["is_warranty_case"] is False  # рішення за працівником
+    assert "Гарантійне звернення" in unread(client, admin)["items"][0]["text"]
+    decided = request(client, admin, "PUT", f"/orders/{order['id']}", {"is_warranty_case": True})
+    assert decided["is_warranty_case"] is True and Decimal(str(decided["total_cost"])) == 0

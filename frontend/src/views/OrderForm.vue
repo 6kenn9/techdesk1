@@ -1,14 +1,15 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Plus } from 'lucide-vue-next'
 import { api } from '../api'
-import { devicePayload, emptyQuick, icons } from '../domain'
+import { date, devicePayload, emptyQuick, icons } from '../domain'
 import { useSession } from '../state'
 import QuickFields from '../components/QuickFields.vue'
 import DeliveryFields from '../components/DeliveryFields.vue'
 
 const session = useSession(),
+  route = useRoute(),
   router = useRouter()
 if (session.staff) router.replace('/orders/intake')
 const devices = ref([]),
@@ -18,12 +19,16 @@ const devices = ref([]),
   busy = ref(false),
   loaded = ref(false)
 const delivery = ref({ method: 'pickup', city: '', branch: '' })
+// Посилання з нагадування бота (?device=7&warranty=1) одразу обирає пристрій і позначає гарантійне звернення.
+const warrantyClaim = ref(route.query.warranty === '1')
 const known = computed(() => devices.value.length > 0 && pick.value !== 'new')
 const device = computed(() => devices.value.find(item => item.id === pick.value))
 onMounted(async () => {
   try {
     devices.value = await api('/passports')
-    if (devices.value.length === 1) pick.value = devices.value[0].id
+    const wanted = Number(route.query.device)
+    if (devices.value.some(item => item.id === wanted)) pick.value = wanted
+    else if (devices.value.length === 1) pick.value = devices.value[0].id
   } catch (e) {
     error.value = e.message
   } finally {
@@ -35,7 +40,10 @@ async function save() {
   busy.value = true
   try {
     const data = { problem_description: form.value.problem_description, delivery: delivery.value }
-    if (device.value) data.device_id = device.value.id
+    if (device.value) {
+      data.device_id = device.value.id
+      data.warranty_claim = Boolean(device.value.warranty && warrantyClaim.value)
+    }
     else data.new_device = devicePayload(form.value)
     const result = await api('/orders', { method: 'POST', data })
     session.notify('Заявку зареєстровано.')
@@ -94,6 +102,14 @@ async function save() {
             placeholder="Коротко опишіть несправність"
           ></textarea>
         </label>
+        <template v-if="device?.warranty">
+          <label class="check">
+            <input v-model="warrantyClaim" type="checkbox" />
+            Гарантійне звернення: несправність пов’язана з ремонтом {{ device.warranty.order_number }}
+            (гарантія до {{ date(device.warranty.expires_at) }})
+          </label>
+          <p v-if="warrantyClaim" class="muted">Майстер перевірить, чи випадок гарантійний. Якщо так, ремонт буде безкоштовним.</p>
+        </template>
       </template>
       <QuickFields v-if="loaded && !device && (pick === 'new' || !devices.length)" v-model="form" show-serial />
       <DeliveryFields v-if="loaded && (device || pick === 'new' || !devices.length)" v-model="delivery" />

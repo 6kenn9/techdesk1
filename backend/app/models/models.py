@@ -68,7 +68,7 @@ class Device(Base):
 class Order(Base):
     __tablename__ = "repair_orders"
     __table_args__ = (
-        CheckConstraint("status IN ('registered','diagnostics','waiting_approval','in_repair','ready_for_pickup','completed','cancelled')", name="valid_status"),
+        CheckConstraint("status IN ('registered','diagnostics','waiting_approval','in_repair','ready_for_pickup','completed','cancelled','returned')", name="valid_status"),
         CheckConstraint("client_approval_status IN ('pending','approved','rejected')", name="valid_approval"),
         CheckConstraint("warranty_days >= 0 AND paid_amount >= 0", name="valid_order_amounts"),
         CheckConstraint("rating IS NULL OR rating BETWEEN 1 AND 5", name="valid_rating"),
@@ -87,6 +87,8 @@ class Order(Base):
     diagnostics: Mapped[str] = mapped_column(Text, default="")
     internal_notes: Mapped[str] = mapped_column(Text, default="")
     is_warranty_case: Mapped[bool] = mapped_column(default=False)
+    # клієнт просить гарантійний ремонт; рішення (is_warranty_case) ухвалює майстер або адміністратор
+    warranty_claim: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     works_total: Mapped[Decimal] = money()
     parts_total: Mapped[Decimal] = money()
     total_cost: Mapped[Decimal] = money()

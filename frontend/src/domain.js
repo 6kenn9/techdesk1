@@ -5,7 +5,7 @@ export const stages = [
   ['waiting_approval', 'Очікує погодження вартості'], ['in_repair', 'У ремонті'],
   ['ready_for_pickup', 'Готова до видачі'], ['completed', 'Завершена'],
 ]
-export const statuses = Object.fromEntries([...stages, ['cancelled', 'Скасована']])
+export const statuses = Object.fromEntries([...stages, ['cancelled', 'Скасована'], ['returned', 'Повернуто клієнту']])
 // Пояснення етапів для клієнта: [короткий заголовок, що відбувається зараз і що буде далі].
 export const stageNotes = {
   registered: ['Пристрій прийнято', 'Заявку зареєстровано. Майстер візьме пристрій на діагностику, зазвичай протягом робочого дня.'],
@@ -14,7 +14,8 @@ export const stageNotes = {
   in_repair: ['Ремонт триває', 'Майстер виконує погоджені роботи. Ми повідомимо, коли пристрій буде готовий.'],
   ready_for_pickup: ['Пристрій готовий', 'Ремонт завершено. Заберіть пристрій, назвавши номер заявки.'],
   completed: ['Ремонт завершено', 'Пристрій видано. Гарантійний талон доступний у документах заявки.'],
-  cancelled: ['Заявку скасовано', 'Ремонт не виконувався. Якщо маєте питання, зверніться до сервісного центру.'],
+  cancelled: ['Заявку скасовано', 'Пристрій ще в сервісному центрі: заберіть його, назвавши номер заявки, або дочекайтеся відправки Новою Поштою.'],
+  returned: ['Пристрій повернуто', 'Пристрій віддано вам, заявку закрито.'],
 }
 export const roles = { client: 'Клієнт', master: 'Майстер', admin: 'Адміністратор' }
 export const approvals = { pending: 'Очікує рішення', approved: 'Погоджено', rejected: 'Відхилено' }
@@ -50,7 +51,7 @@ export const ageLabel = value => { const days = daysSince(value); return days ==
 export const STALE_DAYS = 3
 // Готовий пристрій, який не забирають, потребує нагадування клієнту.
 export const PICKUP_DAYS = 5
-export const isClosed = order => ['completed', 'cancelled'].includes(order.status)
+export const isClosed = order => ['completed', 'cancelled', 'returned'].includes(order.status)
 // Стан роботи: у кого зараз «м’яч».
 //   free — майстра ще немає; todo — наступний крок за майстром; client — чекаємо рішення клієнта щодо кошторису;
 //   pickup — пристрій готовий і чекає, поки клієнт його забере; archive — заявку закрито.

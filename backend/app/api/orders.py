@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Query
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from ..core.security import Current, Db, Staff, fail
 import csv
 import io
@@ -8,9 +8,9 @@ from decimal import Decimal
 from fastapi import Response
 from ..models.models import Device, Order, OrderPart, Payment, Service, StatusHistory, User, Work, now
 from ..schemas.schemas import Approval, ClientCancel, Delivery, RatingInput, Shipment, OrderCreate, OrderEdit, OrderPartInput, PaymentInput, Quantity, Transition, WorkInput
-from ..services.domain import (ACTIVE, apply_delivery, stage_started, access_device, access_order, add_part, decide_estimate, ensure_draft, estimate_version,
-                               LABELS, local_date, lock_part, new_order, order_details, order_summary, refresh_totals, set_stage,
-                               stock_move, transition, warranty)
+from ..services.domain import (ACTIVE, apply_delivery, stage_started, access_device, access_order, add_part, decide_estimate, ensure_draft, ensure_estimate_editable, estimate_version,
+                               CLOSED, LABELS, local_date, lock_part, new_order, order_details, order_summary, preload, recheck_approval, refresh_totals,
+                               repair_started, stock_move, transition, warranty)
 from ..services.notifications import emit
 
 router = APIRouter(prefix="/api/orders")
@@ -36,8 +36,11 @@ def filtered_orders(db, user, q, status, category, master_id, warranty_only):
 def list_orders(db: Db, user: Current, q: str = Query("", max_length=160), status: str = "",
                 category: str = "", master_id: int | None = None, warranty_only: bool = False):
     orders = filtered_orders(db, user, q, status, category, master_id, warranty_only)
+    loaded = preload(db, orders)  # пристрої й люди одним запитом; змінна тримає їх у сесії до кінця відповіді
     since = stage_started(db, [order.id for order in orders])
-    return [order_summary(db, order, since.get(order.id, order.created_at)) for order in orders]
+    result = [order_summary(db, order, since.get(order.id, order.created_at)) for order in orders]
+    del loaded
+    return result
 
 def money_text(value):
     return f"{Decimal(value or 0):.2f}".replace(".", ",")  # Excel з українськими налаштуваннями чекає кому
@@ -49,36 +52,16 @@ def csv_response(rows, filename):
     return Response(("\ufeff" + buffer.getvalue()).encode("utf-8"), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
-@router.get("/export.csv")
-def export_orders(db: Db, user: Staff, q: str = Query("", max_length=160), status: str = "",
-                  category: str = "", master_id: int | None = None, warranty_only: bool = False):
-    orders = filtered_orders(db, user, q, status, category, master_id, warranty_only)
-    rows = [["Номер", "Створено", "Клієнт", "Телефон", "Пристрій", "Категорія", "Серійний номер", "Етап", "Майстер",
-             "Пріоритет", "Гарантійний", "Сума, грн", "Оплачено, грн", "Завершено", "Отримання", "ТТН", "Оцінка"]]
-    for order in orders:
-        device, client = db.get(Device, order.device_id), db.get(User, order.client_id)
-        master = db.get(User, order.master_id) if order.master_id else None
-        rows.append([order.order_number, local_date(order.created_at).strftime("%d.%m.%Y"), client.full_name, client.phone,
-                     f"{device.brand} {device.model}", device.device_category, device.serial_number or "", LABELS[order.status],
-                     master.full_name if master else "", "терміновий" if order.priority == "urgent" else "звичайний",
-                     "так" if order.is_warranty_case else "ні", money_text(order.total_cost), money_text(order.paid_amount),
-                     local_date(order.completed_at).strftime("%d.%m.%Y") if order.completed_at else "",
-                     f"Нова Пошта: {order.delivery_city}, {order.delivery_branch}" if order.delivery_method == "nova_poshta" else "самовивіз",
-                     order.delivery_ttn or "", order.rating or ""])
-    return csv_response(rows, f"techdesk-orders-{day_type.today().isoformat()}.csv")
+EXPORT_HEADER = ["Номер", "Створено", "Клієнт", "Телефон", "Пристрій", "Категорія", "Серійний номер", "Етап", "Майстер",
+                 "Пріоритет", "Гарантійний", "Сума, грн", "Оплачено, грн", "Завершено", "Отримання", "ТТН", "Оцінка"]
 
-@router.get("/export.xlsx")
-def export_orders_xlsx(db: Db, user: Staff, q: str = Query("", max_length=160), status: str = "",
-                       category: str = "", master_id: int | None = None, warranty_only: bool = False):
-    """Те саме, що CSV, але справжній файл Excel: дати й суми — числа, телефони — текст, ширина колонок."""
-    from ..services.excel import table_sheet, xlsx_response
-    orders = filtered_orders(db, user, q, status, category, master_id, warranty_only)
-    header = ["Номер", "Створено", "Клієнт", "Телефон", "Пристрій", "Категорія", "Серійний номер", "Етап", "Майстер",
-              "Пріоритет", "Гарантійний", "Сума, грн", "Оплачено, грн", "Завершено", "Отримання", "ТТН", "Оцінка"]
+def export_rows(db, orders):
+    """Рядки експорту зі справжніми типами (дата, Decimal, None); CSV далі перетворює їх на текст."""
+    devices, people = preload(db, orders)
     rows = []
     for order in orders:
-        device, client = db.get(Device, order.device_id), db.get(User, order.client_id)
-        master = db.get(User, order.master_id) if order.master_id else None
+        device, client = devices[order.device_id], people[order.client_id]
+        master = people.get(order.master_id)
         rows.append([order.order_number, local_date(order.created_at), client.full_name, client.phone,
                      f"{device.brand} {device.model}", device.device_category, device.serial_number or "", LABELS[order.status],
                      master.full_name if master else "", "терміновий" if order.priority == "urgent" else "звичайний",
@@ -86,8 +69,31 @@ def export_orders_xlsx(db: Db, user: Staff, q: str = Query("", max_length=160), 
                      local_date(order.completed_at) if order.completed_at else None,
                      f"Нова Пошта: {order.delivery_city}, {order.delivery_branch}" if order.delivery_method == "nova_poshta" else "самовивіз",
                      order.delivery_ttn or "", order.rating])
-    return xlsx_response(lambda wb: table_sheet(wb, "Заявки", header, rows),
-                         f"techdesk-orders-{day_type.today().isoformat()}.xlsx")
+    return rows
+
+def export_name(extension):
+    return f"techdesk-orders-{local_date(now()).isoformat()}.{extension}"  # дата за київським часом, а не часом сервера
+
+@router.get("/export.csv")
+def export_orders(db: Db, user: Staff, q: str = Query("", max_length=160), status: str = "",
+                  category: str = "", master_id: int | None = None, warranty_only: bool = False):
+    orders = filtered_orders(db, user, q, status, category, master_id, warranty_only)
+    def text(value):
+        if isinstance(value, Decimal):
+            return money_text(value)
+        if isinstance(value, day_type):
+            return value.strftime("%d.%m.%Y")
+        return "" if value is None else value
+    rows = [EXPORT_HEADER] + [[text(value) for value in row] for row in export_rows(db, orders)]
+    return csv_response(rows, export_name("csv"))
+
+@router.get("/export.xlsx")
+def export_orders_xlsx(db: Db, user: Staff, q: str = Query("", max_length=160), status: str = "",
+                       category: str = "", master_id: int | None = None, warranty_only: bool = False):
+    """Те саме, що CSV, але справжній файл Excel: дати й суми — числа, телефони — текст, ширина колонок."""
+    from ..services.excel import table_sheet, xlsx_response
+    rows = export_rows(db, filtered_orders(db, user, q, status, category, master_id, warranty_only))
+    return xlsx_response(lambda wb: table_sheet(wb, "Заявки", EXPORT_HEADER, rows), export_name("xlsx"))
 
 def validate_master(db, master_id):
     if master_id is not None:
@@ -113,9 +119,12 @@ def create_order(payload: OrderCreate, db: Db, user: Current):
         fail(403, "Призначити іншого майстра може адміністратор.")
     validate_master(db, payload.master_id)
     active_warranty = warranty(db, device.id)
-    if payload.is_warranty_case and not active_warranty:
+    if (payload.is_warranty_case or payload.warranty_claim) and not active_warranty:
         fail(422, "На пристрій немає чинної гарантії.")
-    order = new_order(db, user, device, payload.model_dump(exclude={"device_id", "new_device"}))
+    fields = payload.model_dump(exclude={"device_id", "new_device"})
+    if user.role != "client":
+        fields["warranty_claim"] = False  # працівник одразу вирішує сам через «Гарантійний випадок»
+    order = new_order(db, user, device, fields)
     db.commit()
     return dict(order_details(db, order, user), active_warranty=active_warranty)
 
@@ -134,10 +143,10 @@ def edit(order_id: int, payload: OrderEdit, db: Db, user: Staff):
             fail(403, "Ви можете взяти лише вільну заявку.")
         validate_master(db, fields["master_id"])
     if "diagnostics" in fields:
-        ensure_draft(order)
+        ensure_estimate_editable(order)  # під час ремонту майстер дописує нову знахідку
     if "paid_amount" in fields:
-        if order.status not in ("ready_for_pickup", "completed") or fields["paid_amount"] is None or fields["paid_amount"] > order.total_cost:
-            fail(422, "Оплату можна облікувати після ремонту в межах суми замовлення.")
+        if order.status != "ready_for_pickup" or fields["paid_amount"] is None or fields["paid_amount"] > order.total_cost:
+            fail(422, "Оплату приймають, коли пристрій готовий до видачі, у межах суми замовлення.")
         if fields["paid_amount"] < order.paid_amount:
             fail(422, "Облікову оплату не можна зменшити: кожна оплата зберігається окремим записом.")
         if fields["paid_amount"] > order.paid_amount:  # сумісність зі старим інтерфейсом: різниця — оплата готівкою
@@ -191,17 +200,28 @@ def work_values(db, payload):
     return dict(service_id=payload.service_id, work_name=name, price=price,
                 updates_passport_spec=payload.updates_passport_spec)
 
-def saved(db, order, user):
+def sync_warranty(db, order):
+    """Гарантія ремонту — найдовший строк серед послуг прейскуранту в кошторисі.
+    Якщо послуг із прейскуранту немає, лишається строк, заданий працівником."""
+    days = db.scalar(select(func.max(Service.warranty_days)).join(Work, Work.service_id == Service.id)
+                     .where(Work.order_id == order.id))
+    if days is not None:
+        order.warranty_days = days
+
+def saved(db, order, user, works_changed=False):
     refresh_totals(db, order)
+    if works_changed:
+        sync_warranty(db, order)
+    recheck_approval(order)  # під час ремонту доплата понад погоджену суму знову чекає згоди клієнта
     db.commit()
     return order_details(db, order, user)
 
 @router.post("/{order_id}/works", status_code=201)
 def add_work(order_id: int, payload: WorkInput, db: Db, user: Staff):
     order = access_order(db, order_id, user, write=True)
-    ensure_draft(order)
+    ensure_estimate_editable(order)
     db.add(Work(order_id=order.id, master_id=order.master_id, **work_values(db, payload)))
-    return saved(db, order, user)
+    return saved(db, order, user, works_changed=True)
 
 def line(db, model, order_id, line_id):
     item = db.get(model, line_id)
@@ -212,23 +232,23 @@ def line(db, model, order_id, line_id):
 @router.patch("/{order_id}/works/{line_id}")
 def edit_work(order_id: int, line_id: int, payload: WorkInput, db: Db, user: Staff):
     order = access_order(db, order_id, user, write=True)
-    ensure_draft(order)
+    ensure_estimate_editable(order)
     item = line(db, Work, order_id, line_id)
     for key, value in work_values(db, payload).items():
         setattr(item, key, value)
-    return saved(db, order, user)
+    return saved(db, order, user, works_changed=True)
 
 @router.delete("/{order_id}/works/{line_id}")
 def delete_work(order_id: int, line_id: int, db: Db, user: Staff):
     order = access_order(db, order_id, user, write=True)
-    ensure_draft(order)
+    ensure_estimate_editable(order)
     db.delete(line(db, Work, order_id, line_id))
-    return saved(db, order, user)
+    return saved(db, order, user, works_changed=True)
 
 @router.post("/{order_id}/parts", status_code=201)
 def add_order_part(order_id: int, payload: OrderPartInput, db: Db, user: Staff):
     order = access_order(db, order_id, user, write=True)
-    ensure_draft(order)
+    ensure_estimate_editable(order)
     part = lock_part(db, payload.part_id)
     if part.compatible_device_category and part.compatible_device_category != db.get(Device, order.device_id).device_category:
         fail(422, "Запчастина не підходить до категорії пристрою.")
@@ -238,7 +258,7 @@ def add_order_part(order_id: int, payload: OrderPartInput, db: Db, user: Staff):
 @router.patch("/{order_id}/parts/{line_id}")
 def edit_order_part(order_id: int, line_id: int, payload: Quantity, db: Db, user: Staff):
     order = access_order(db, order_id, user, write=True)
-    ensure_draft(order)
+    ensure_estimate_editable(order)
     item = line(db, OrderPart, order_id, line_id)
     difference = item.quantity - payload.quantity
     if difference:
@@ -250,7 +270,7 @@ def edit_order_part(order_id: int, line_id: int, payload: Quantity, db: Db, user
 @router.delete("/{order_id}/parts/{line_id}")
 def delete_order_part(order_id: int, line_id: int, db: Db, user: Staff):
     order = access_order(db, order_id, user, write=True)
-    ensure_draft(order)
+    ensure_estimate_editable(order)
     item = line(db, OrderPart, order_id, line_id)
     stock_move(db, lock_part(db, item.part_id), item.quantity, user.id, "Повернення з заявки", order.id)
     db.delete(item)
@@ -274,15 +294,16 @@ def add_payment(order_id: int, payload: PaymentInput, db: Db, user: Staff):
 
 @router.post("/{order_id}/cancel")
 def client_cancel(order_id: int, payload: ClientCancel, db: Db, user: Current):
-    """Клієнт скасовує власну заявку, поки пристрій ще не взяли в роботу."""
+    """Клієнт скасовує власну заявку, поки пристрій не взяли в роботу або після відмови від кошторису."""
     if user.role != "client":
         fail(403, "Працівники змінюють етап заявки в блоці керування.")
-    order = access_order(db, order_id, user)
-    order = db.scalar(select(Order).where(Order.id == order.id).with_for_update())
-    if order.status != "registered":
+    order = access_order(db, order_id, user, write=True)
+    rejected = order.status == "waiting_approval" and order.client_approval_status == "rejected" and not repair_started(order)
+    if order.status != "registered" and not rejected:
         fail(409, "Заявку вже взято в роботу. Щоб скасувати її, зверніться до сервісного центру.")
     comment = payload.comment.strip()
-    set_stage(db, order, "cancelled", user.id, "Скасовано клієнтом" + (f": {comment}" if comment else ""))
+    # через загальний перехід: зарезервовані під кошторис деталі повертаються на склад
+    transition(db, order, "cancelled", user, "Скасовано клієнтом" + (f": {comment}" if comment else ""))
     from ..services.inbox import describe, notify_staff
     notify_staff(db, order, "cancelled", f"Клієнт скасував заявку: {describe(db, order)}" + (f". Причина: {comment}" if comment else ""), user.id)
     db.commit()
@@ -292,7 +313,8 @@ def client_cancel(order_id: int, payload: ClientCancel, db: Db, user: Current):
 def change_delivery(order_id: int, payload: Delivery, db: Db, user: Current):
     """Клієнт або працівник змінює спосіб повернення пристрою, доки його не відправлено."""
     order = access_order(db, order_id, user, write=True)
-    if order.status in ("completed", "cancelled") or order.delivery_ttn:
+    # Для скасованої заявки спосіб ще можна змінити: пристрій повертають клієнту самовивозом або Новою Поштою.
+    if order.status in CLOSED or order.delivery_ttn:
         fail(409, "Спосіб отримання вже не можна змінити.")
     for key, value in apply_delivery(payload.model_dump()).items():
         setattr(order, key, value)
@@ -309,12 +331,13 @@ def ship(order_id: int, payload: Shipment, db: Db, user: Staff):
     order = access_order(db, order_id, user, write=True)
     if order.delivery_method != "nova_poshta":
         fail(409, "Клієнт обрав самовивіз.")
-    if order.status != "ready_for_pickup":
-        fail(409, "Відправити можна лише відремонтований пристрій.")
-    if order.paid_amount < order.total_cost:
+    if order.status not in ("ready_for_pickup", "cancelled"):
+        fail(409, "Відправити можна відремонтований пристрій або повернути пристрій після скасування.")
+    if order.status == "ready_for_pickup" and order.paid_amount < order.total_cost:
         fail(409, "Перед відправкою облікуйте повну оплату замовлення.")
-    order.delivery_ttn = payload.ttn
-    from ..services.notifications import emit
+    if payload.ttn == order.delivery_ttn:  # повторне збереження того самого номера — без зайвого сповіщення клієнту
+        return order_details(db, order, user)
+    order.delivery_ttn = payload.ttn  # інший номер — виправлення помилки, клієнт отримає актуальну накладну
     emit(db, "shipped", order.id)
     db.commit()
     return order_details(db, order, user)

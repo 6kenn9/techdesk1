@@ -2,7 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft, ArrowUpRight, Copy, Cpu, Pencil, QrCode, Tag, Wrench } from 'lucide-vue-next'
-import { api, download } from '../api'
+import { api, download, query } from '../api'
 import { dateTime, icons, specLabels } from '../domain'
 import { useSession } from '../state'
 import Modal from '../components/Modal.vue'
@@ -63,6 +63,37 @@ async function save() {
     item.value = await api('/passports/' + id + path, { method: modal.value === 'edit' ? 'PUT' : 'POST', data: form.value })
     modal.value = ''
     session.notify('Паспорт оновлено.')
+  } catch (e) {
+    session.notify(e.message, 'error')
+  } finally {
+    busy.value = false
+  }
+}
+// Зміна власника: пристрій продали чи подарували, паспорт з історією переходить до іншого клієнта.
+const transferForm = ref({ phone: '', reason: '' }),
+  buyer = ref(null)
+function openTransfer() {
+  transferForm.value = { phone: '', reason: '' }
+  buyer.value = null
+  modal.value = 'transfer'
+}
+async function findBuyer() {
+  busy.value = true
+  try {
+    buyer.value = await api('/users/lookup' + query({ phone: transferForm.value.phone }))
+    if (!buyer.value) session.notify('Клієнта з таким телефоном не знайдено. Спершу зареєструйте його.', 'error')
+  } catch (e) {
+    session.notify(e.message, 'error')
+  } finally {
+    busy.value = false
+  }
+}
+async function transfer() {
+  busy.value = true
+  try {
+    item.value = await api('/passports/' + id + '/transfer', { method: 'POST', data: { owner_id: buyer.value.id, reason: transferForm.value.reason } })
+    modal.value = ''
+    session.notify('Пристрій передано новому власнику.')
   } catch (e) {
     session.notify(e.message, 'error')
   } finally {
@@ -132,6 +163,7 @@ async function copy() {
             <button v-if="item.serial_number" class="icon-button" aria-label="Скопіювати серійний номер" @click="copy"><Copy :size="15" /></button>
           </div>
           <small>Власник: {{ item.owner_name }}</small>
+          <button v-if="session.admin" class="button small" style="margin-top: 6px" @click="openTransfer">Змінити власника</button>
           <form v-if="session.staff && !item.serial_number" class="actions" style="margin-top: 8px" @submit.prevent="saveSerial">
             <input v-model.trim="newSerial" required minlength="2" maxlength="80" placeholder="Внесіть серійний номер" aria-label="Серійний номер" />
             <button class="button small primary" :disabled="busy">Зберегти</button>
@@ -186,7 +218,7 @@ async function copy() {
         </div>
         <ul v-if="item.spec_history.length" class="log">
           <li v-for="entry in item.spec_history" :key="entry.id">
-            <strong>{{ specLabels[entry.field_name] || entry.field_name }}</strong>
+            <strong>{{ entry.field_name === 'owner' ? 'Власник' : specLabels[entry.field_name] || entry.field_name }}</strong>
             · {{ entry.old_value || '—' }} → {{ entry.new_value || '—' }}
             <small>{{ dateTime(entry.changed_at) }} · {{ entry.technician }} {{ entry.order_number || '' }}</small>
             <p>{{ entry.change_reason }}</p>
@@ -226,8 +258,29 @@ async function copy() {
       </template>
       <PhotoGallery v-if="tab === 'photos'" :device-id="item.id" :can-upload="session.staff" :orders="item.orders" />
     </div>
+    <Modal v-if="modal === 'transfer'" title="Зміна власника пристрою" @close="modal = ''">
+      <form v-if="!buyer" class="form-stack" @submit.prevent="findBuyer">
+        <p>Паспорт з усією історією перейде до нового власника. Попередні заявки лишаться за старим власником.</p>
+        <label>
+          Телефон нового власника
+          <input v-model.trim="transferForm.phone" type="tel" required minlength="5" maxlength="24" placeholder="050 123 45 67" />
+        </label>
+        <button class="button primary" :disabled="busy">Знайти клієнта</button>
+      </form>
+      <form v-else class="form-stack" @submit.prevent="transfer">
+        <p>Новий власник: <strong>{{ buyer.full_name }}</strong> · {{ buyer.phone }}</p>
+        <label>
+          Підстава (необов’язково)
+          <input v-model.trim="transferForm.reason" maxlength="4000" placeholder="Наприклад: продаж пристрою" />
+        </label>
+        <div class="actions">
+          <button class="button primary" :disabled="busy">Передати пристрій</button>
+          <button type="button" class="button" @click="buyer = null">Інший телефон</button>
+        </div>
+      </form>
+    </Modal>
     <Modal
-      v-if="modal"
+      v-if="modal && modal !== 'transfer'"
       :title="{ edit: 'Редагування паспорта', upgrade: 'Оновлення конфігурації', defect: 'Запис про дефект', qr: 'Код цифрового паспорта' }[modal]"
       @close="modal = ''"
     >

@@ -56,10 +56,23 @@ async function resetPassword() {
     busy.value = false
   }
 }
+async function reissueLink() {
+  if (!confirm(`Видати нове посилання для ${selected.value.full_name}? Попереднє посилання перестане діяти.`)) return
+  busy.value = true
+  try {
+    const r = await api(`/users/${selected.value.id}/claim-link`, { method: 'POST' })
+    issued.value = { name: selected.value.full_name, phone: selected.value.phone, link: `${location.origin}/claim/${r.claim_token}`, days: r.claim_days }
+    modal.value = 'password'
+  } catch (e) {
+    session.notify(e.message, 'error')
+  } finally {
+    busy.value = false
+  }
+}
 async function copyPassword() {
   try {
-    await navigator.clipboard.writeText(issued.value.password)
-    session.notify('Пароль скопійовано.')
+    await navigator.clipboard.writeText(issued.value.link || issued.value.password)
+    session.notify(issued.value.link ? 'Посилання скопійовано.' : 'Пароль скопійовано.')
   } catch {
     session.notify('Скопіюйте пароль вручну.', 'error')
   }
@@ -233,17 +246,38 @@ async function save() {
       >
         Скинути пароль
       </button>
+      <button
+        v-if="modal === 'user' && selected && !selected.email && selected.is_active"
+        type="button"
+        class="button full"
+        :disabled="busy"
+        @click="reissueLink"
+      >
+        Нове посилання входу
+      </button>
     </form>
   </Modal>
   <Modal
     v-if="modal === 'password'"
-    title="Тимчасовий пароль"
+    :title="issued.link ? 'Посилання до кабінету' : 'Тимчасовий пароль'"
     @close="
       modal = '';
       issued = null
     "
   >
-    <div class="form-stack">
+    <div v-if="issued.link" class="form-stack">
+      <p>
+        Передайте клієнту
+        <strong>{{ issued.name }}</strong>
+        ({{ issued.phone }}) це посилання. Воно відкриває кабінет без пароля й діє {{ issued.days }} днів.
+      </p>
+      <div class="claim-link">
+        <input :value="issued.link" readonly class="mono" aria-label="Посилання до кабінету" />
+        <button class="button" type="button" @click="copyPassword">Копіювати</button>
+      </div>
+      <p class="muted">Посилання показується лише один раз. Попереднє посилання цього клієнта більше не діє.</p>
+    </div>
+    <div v-else class="form-stack">
       <p>
         Передайте користувачу
         <strong>{{ issued.name }}</strong>

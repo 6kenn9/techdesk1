@@ -86,7 +86,10 @@ def status_text(db, order, title):
     status = order.status
     buttons = None
     if status == "waiting_approval":
-        lines = ["💰 Кошторис готовий", title, ""]
+        extra = order.approved_total is not None  # кошторис доповнили під час ремонту
+        lines = ["💰 Потрібна згода на доплату" if extra else "💰 Кошторис готовий", title, ""]
+        if extra:
+            lines.append(f"Під час ремонту виявлено ще несправність. Раніше погоджено: {money(order.approved_total)}.")
         if order.diagnostics:
             lines.append(f"Діагностика: {order.diagnostics}")
         lines += [f"Роботи: {money(order.works_total)}", f"Запчастини: {money(order.parts_total)}",
@@ -114,9 +117,15 @@ def status_text(db, order, title):
             text += f"\nГарантія до {date_text(order.warranty_expires_at)}. Нагадаємо за тиждень до її завершення."
         if order.rating is None:
             text += "\n\n⭐ Будемо вдячні за оцінку ремонту — це займе пів хвилини."
+    elif status == "cancelled":
+        how = "Відправимо пристрій Новою Поштою й надішлемо номер накладної." if order.delivery_method == "nova_poshta" \
+            else "Заберіть пристрій у сервісному центрі, назвавши номер заявки."
+        text = f"Заявку скасовано\n{title}\n{how}"
+    elif status == "returned":
+        text = f"↩️ Пристрій повернуто вам\n{title}\nЗаявку закрито."
     else:
         heads = {"registered": "📥 Заявку прийнято", "diagnostics": "🔍 Пристрій на діагностиці",
-                 "in_repair": "🔧 Ремонт розпочато", "cancelled": "Заявку скасовано"}
+                 "in_repair": "🔧 Ремонт розпочато"}
         text = f"{heads[status]}\n{title}"
     return text, buttons
 
@@ -160,7 +169,9 @@ def due_reminders(db, moment=None):
         left = max(1, (order.warranty_expires_at - moment).days)
         text = (f"🛡 Гарантія на ремонт закінчується {date_text(order.warranty_expires_at)}\n{order.order_number} · {device.brand} {device.model}\n\n"
                 f"Залишилось днів: {left}. Якщо помітили проблему, пов'язану з цим ремонтом, зверніться до цієї дати: гарантійний ремонт безкоштовний.")
-        result.append((order, "warranty", client.telegram_chat_id, *with_link(text, "Подати гарантійну заявку", "/orders/new")))
+        # Форма одразу відкривається з цим пристроєм і позначкою «гарантійне звернення».
+        result.append((order, "warranty", client.telegram_chat_id,
+                       *with_link(text, "Подати гарантійну заявку", f"/orders/new?device={order.device_id}&warranty=1")))
     # Профілактика: лише останній ремонт пристрою, щоб не радити чистку, якщо пристрій уже знову був у сервісі.
     old = (select(Order).join(Device, Device.id == Order.device_id)
            .where(Order.status == "completed", Order.maintenance_reminded_at.is_(None), Order.client_id.in_(linked),
@@ -338,7 +349,7 @@ class Bot:
     def _orders(self, chat_id):
         """Список активних заявок; кошториси, що чекають рішення, надсилаються окремо з кнопками."""
         with SessionLocal() as db:
-            user = db.scalar(select(User).where(User.telegram_chat_id == chat_id))
+            user = db.scalar(select(User).where(User.telegram_chat_id == chat_id, User.is_active))
             if not user:
                 return self.send(chat_id, "Обліковий запис не підключено. " + HELP.split("\n\n")[1])
             query = select(Order).where(Order.status.in_(domain.ACTIVE)).order_by(Order.created_at.desc()).limit(10)
@@ -359,7 +370,7 @@ class Bot:
 
     def _warranty(self, chat_id):
         with SessionLocal() as db:
-            user = db.scalar(select(User).where(User.telegram_chat_id == chat_id))
+            user = db.scalar(select(User).where(User.telegram_chat_id == chat_id, User.is_active))
             if not user:
                 return "Обліковий запис не підключено. " + HELP.split("\n\n")[1]
             query = (select(Order).where(Order.client_id == user.id, Order.status == "completed", Order.warranty_expires_at > now())
@@ -380,7 +391,7 @@ class Bot:
         try:
             action, order_id, version = callback.get("data", "").split(":")
             order_id = int(order_id)
-            assert action in ("ap", "rj")
+            assert action in ("ap", "rj") and len(version) >= 8  # порожній префікс збігся б із будь-яким кошторисом
         except (ValueError, AssertionError):
             return answer("Невідома дія.")
         approved = action == "ap"

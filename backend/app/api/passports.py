@@ -2,9 +2,16 @@ from fastapi import APIRouter, File, Form, Query, Response, UploadFile
 from sqlalchemy import func
 from sqlalchemy import or_, select
 from ..core.security import Admin, Current, Db, Staff, fail
-from ..models.models import Device, DevicePhoto, ModelPreset, Order, User
-from ..schemas.schemas import Defect, DeviceCreate, Hardware, PresetCreate, Upgrade
-from ..services.domain import access_device, access_order, add_preset, change_spec, passport, row
+from ..models.models import Device, DevicePhoto, ModelPreset, Order, SpecHistory, User
+from ..schemas.schemas import Defect, DeviceCreate, Hardware, OwnerTransfer, PresetCreate, Upgrade
+from ..services.domain import ACTIVE, access_device, access_order, add_preset, change_spec, passport, row, warranties
+
+def visible_to(query, user):
+    """Клієнт бачить фото пристрою без заявки та фото власних заявок, але не заявок попереднього власника."""
+    if user.role != "client":
+        return query
+    return query.where(or_(DevicePhoto.order_id.is_(None),
+                           DevicePhoto.order_id.in_(select(Order.id).where(Order.client_id == user.id))))
 
 from ..services.photos import MAX_PER_DEVICE, MAX_UPLOAD_BYTES, normalize
 
@@ -13,7 +20,7 @@ photos = APIRouter(prefix="/api/photos")
 
 @router.get("")
 def list_passports(db: Db, user: Current, q: str = Query("", max_length=160), category: str = ""):
-    query = select(Device).join(User, Device.owner_id == User.id).order_by(Device.id.desc())
+    query = select(Device, User.full_name).join(User, Device.owner_id == User.id).order_by(Device.id.desc())
     if user.role == "client":
         query = query.where(Device.owner_id == user.id)
     if q:
@@ -21,7 +28,9 @@ def list_passports(db: Db, user: Current, q: str = Query("", max_length=160), ca
             Device.serial_number, Device.brand, Device.model, User.full_name, User.phone))))
     if category:
         query = query.where(Device.device_category == category)
-    return [passport(db, device, user) for device in db.scalars(query)]
+    found = db.execute(query).all()
+    active = warranties(db, [device.id for device, _ in found])
+    return [passport(db, device, user, warranty_info=active.get(device.id), owner_name=owner) for device, owner in found]
 
 @router.get("/presets")
 def presets(db: Db, user: Current):
@@ -87,6 +96,25 @@ def upgrade(device_id: int, payload: Upgrade, db: Db, user: Staff):
     db.commit()
     return passport(db, device, user, True)
 
+@router.post("/{device_id}/transfer")
+def transfer(device_id: int, payload: OwnerTransfer, db: Db, user: Admin):
+    """Пристрій продали чи подарували: паспорт з усією історією переходить до іншого клієнта.
+    Попередні заявки лишаються за старим власником, нові оформлюються на нового."""
+    device = access_device(db, device_id, user, lock=True)
+    owner = db.get(User, payload.owner_id)
+    if not owner or owner.role != "client" or not owner.is_active:
+        fail(422, "Оберіть активного клієнта.")
+    if owner.id == device.owner_id:
+        fail(409, "Пристрій уже належить цьому клієнту.")
+    if db.scalar(select(Order.order_number).where(Order.device_id == device.id, Order.status.in_(ACTIVE)).limit(1)):
+        fail(409, "Спершу завершіть або скасуйте відкриту заявку на цей пристрій.")
+    previous = db.get(User, device.owner_id)
+    db.add(SpecHistory(device_id=device.id, changed_by_id=user.id, field_name="owner", old_value=previous.full_name,
+                       new_value=owner.full_name, change_reason=payload.reason or "Зміна власника пристрою"))
+    device.owner_id = owner.id
+    db.commit()
+    return passport(db, device, user, True)
+
 @router.post("/{device_id}/defects")
 def add_defect(device_id: int, payload: Defect, db: Db, user: Staff):
     device = access_device(db, device_id, user, lock=True)
@@ -105,7 +133,7 @@ def photo_info(db, photo):
 @router.get("/{device_id}/photos")
 def list_photos(device_id: int, db: Db, user: Current, order_id: int | None = None):
     access_device(db, device_id, user)
-    query = select(DevicePhoto).where(DevicePhoto.device_id == device_id)
+    query = visible_to(select(DevicePhoto).where(DevicePhoto.device_id == device_id), user)
     if order_id:
         query = query.where(DevicePhoto.order_id == order_id)
     return [photo_info(db, photo) for photo in db.scalars(query.order_by(DevicePhoto.created_at.desc(), DevicePhoto.id.desc()))]
@@ -132,7 +160,7 @@ def upload_photo(device_id: int, db: Db, user: Staff, file: UploadFile = File(..
 
 @photos.get("/{photo_id}")
 def photo_file(photo_id: int, db: Db, user: Current):
-    photo = db.get(DevicePhoto, photo_id)
+    photo = db.scalar(visible_to(select(DevicePhoto).where(DevicePhoto.id == photo_id), user))
     if not photo:
         fail(404, "Фото не знайдено.")
     access_device(db, photo.device_id, user)

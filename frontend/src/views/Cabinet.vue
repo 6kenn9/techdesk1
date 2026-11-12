@@ -11,7 +11,7 @@ import Stage from '../components/Stage.vue'
 const session = useSession(), devices = ref([]), orders = ref([]), error = ref(''), busy = ref(true)
 const guest = reactive({ email: '', password: '' }), saving = ref(false)
 
-const finished = order => ['completed', 'cancelled'].includes(order.status)
+const finished = order => ['completed', 'cancelled', 'returned'].includes(order.status)
 const needsDecision = order => order.status === 'waiting_approval' && order.client_approval_status === 'pending'
 // Три групи заявок: потрібне рішення клієнта, ремонт триває, архів.
 const waiting = computed(() => orders.value.filter(needsDecision))

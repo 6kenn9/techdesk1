@@ -280,7 +280,7 @@ onMounted(async () => {
       <template v-for="(name, key) in statuses" :key="key">
         <section
           v-if="
-            !['completed', 'cancelled'].includes(key) ||
+            !['completed', 'cancelled', 'returned'].includes(key) ||
             quick === 'archive' ||
             filters.status === key
           "

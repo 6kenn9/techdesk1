@@ -7,7 +7,7 @@ const props = defineProps({ status: String })
 const position = () => (props.status === 'completed' ? stages.length : stages.findIndex(s => s[0] === props.status))
 </script>
 <template>
-  <ol v-if="status !== 'cancelled'" class="timeline" aria-label="Етапи ремонту">
+  <ol v-if="!['cancelled', 'returned'].includes(status)" class="timeline" aria-label="Етапи ремонту">
     <li v-for="([value, label], i) in stages" :key="value" :class="{ done: i < position(), current: i === position() }">
       <span>
         <Check v-if="i < position()" :size="15" aria-label="Завершено" />
@@ -17,9 +17,10 @@ const position = () => (props.status === 'completed' ? stages.length : stages.fi
       <small class="stage-short" :title="label">{{ shortLabels[i] }}</small>
     </li>
   </ol>
-  <p v-if="status !== 'cancelled'" class="timeline-caption">
+  <p v-if="!['cancelled', 'returned'].includes(status)" class="timeline-caption">
     Етап {{ stages.findIndex(s => s[0] === status) + 1 }} з {{ stages.length }} ·
     <strong>{{ statuses[status] }}</strong>
   </p>
-  <div v-else class="alert">Заявку скасовано. Ремонт не виконано.</div>
+  <div v-else-if="status === 'returned'" class="alert">Пристрій повернуто клієнту, заявку закрито.</div>
+  <div v-else class="alert">Заявку скасовано. Пристрій чекає повернення клієнту.</div>
 </template>

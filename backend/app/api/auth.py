@@ -181,10 +181,25 @@ def reset_password(user_id: int, db: Db, admin: Admin):
     if target.id == admin.id:
         fail(409, "Власний пароль змініть у профілі.")
     if target.email is None:
-        fail(409, "Гостьовий кабінет не має пароля: клієнт входить за особистим посиланням.")
+        fail(409, "Гостьовий кабінет не має пароля: видайте клієнту нове особисте посилання.")
     password = temporary_password()
     target.password_hash = hasher.hash(password)
     target.token_version = (target.token_version or 0) + 1
     target.must_change_password = True
     db.commit()
     return {"temporary_password": password, "user": public_user(target)}
+
+@router.post("/users/{user_id}/claim-link")
+def reissue_claim(user_id: int, db: Db, admin: Admin):
+    """Нове особисте посилання для гостьового кабінету, якщо клієнт загубив старе або воно застаріло."""
+    from .intake import CLAIM_DAYS, issue_claim
+    target = db.get(User, user_id)
+    if not target:
+        fail(404, "Користувача не знайдено.")
+    if target.email is not None:
+        fail(409, "Обліковий запис уже має пошту й пароль: скористайтеся скиданням пароля.")
+    if not target.is_active:
+        fail(409, "Спершу увімкніть обліковий запис.")
+    raw = issue_claim(target)
+    db.commit()
+    return {"claim_token": raw, "claim_days": CLAIM_DAYS, "user": public_user(target)}

@@ -24,7 +24,7 @@ const spare = reactive({ part_id: null, quantity: 1 })
 const addMode = ref('work')
 const approval = reactive({ approved: true, comment: '' })
 const control = reactive({ master_id: null, warranty_days: 90 })
-const cancelReason = ref('')
+const cancelReason = ref(''), returnReason = ref('')
 const payment = reactive({ amount: 0, method: 'cash', note: '' })
 const methods = { cash: 'Готівка', card: 'Картка', transfer: 'Переказ' }
 const deliveryForm = ref({ method: 'pickup', city: '', branch: '' }), ttn = ref('')
@@ -33,13 +33,19 @@ const review = reactive({ rating: 0, comment: '' })
 // Що дозволено на поточному етапі
 const staffWrite = computed(() => session.admin || (session.staff && (!item.value?.master_id || item.value.master_id === session.user.id)))
 const draft = computed(() => staffWrite.value && ['registered', 'diagnostics'].includes(item.value?.status))
-const diagnosing = computed(() => staffWrite.value && item.value?.status === 'diagnostics')
+// Кошторис складають під час діагностики й доповнюють під час ремонту (доплату погоджує клієнт).
+const diagnosing = computed(() => staffWrite.value && ['diagnostics', 'in_repair'].includes(item.value?.status))
+// Клієнт хоч раз погодив кошторис: ремонт розпочато, встановлені деталі не повертаються на склад.
+const started = computed(() => item.value?.approved_total != null)
 const repaired = computed(() => ['ready_for_pickup', 'completed'].includes(item.value?.status))
-const active = computed(() => !['completed', 'cancelled'].includes(item.value?.status))
+const active = computed(() => !['completed', 'cancelled', 'returned'].includes(item.value?.status))
 const pending = computed(() => item.value?.status === 'waiting_approval' && item.value?.client_approval_status === 'pending')
 const due = computed(() => Number(item.value?.total_cost || 0) - Number(item.value?.paid_amount || 0))
 const shipping = computed(() => item.value?.delivery_method === 'nova_poshta')
-const canChangeDelivery = computed(() => active.value && !item.value?.delivery_ttn && (!session.staff || staffWrite.value))
+// Для скасованої заявки спосіб ще можна змінити: пристрій повертають самовивозом або Новою Поштою.
+const canChangeDelivery = computed(() => (active.value || item.value?.status === 'cancelled') && !item.value?.delivery_ttn && (!session.staff || staffWrite.value))
+const clientCanCancel = computed(() => item.value?.status === 'registered' ||
+  (item.value?.status === 'waiting_approval' && item.value?.client_approval_status === 'rejected' && !started.value))
 const tracking = computed(() => 'https://novaposhta.ua/tracking/?cargo_number=' + item.value?.delivery_ttn)
 const selectedPart = computed(() => inventory.value.find(part => part.id === spare.part_id))
 // Гарантія за попереднім ремонтом цього пристрою: майстер має побачити її до складання кошторису.
@@ -67,7 +73,10 @@ onMounted(async () => {
   try {
     assign(await api(base))
     // Посилання з кабінету й QR-коду ведуть одразу до кошторису або документів.
-    if (location.hash) nextTick(() => document.querySelector(location.hash)?.scrollIntoView())
+    // getElementById, а не querySelector: хеш на кшталт «#1abc» не є коректним CSS-селектором і кинув би помилку.
+    if (location.hash) nextTick(() => {
+      try { document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView() } catch { /* некоректний хеш — лишаємося вгорі */ }
+    })
     if (session.staff) {
       const [services, people, passport] = await Promise.all([api('/warehouse/services'), api('/users?role=master'), api('/passports/' + item.value.device_id), loadStock()])
       catalog.value = services
@@ -108,6 +117,7 @@ function since(value) { const age = ageLabel(value); return age === 'сього�
 function openPayment() { payment.amount = Number(due.value.toFixed(2)); payment.method = 'cash'; payment.note = ''; modal.value = 'payment' }
 function openDelivery() { deliveryForm.value = { method: item.value.delivery_method, city: item.value.delivery_city, branch: item.value.delivery_branch }; modal.value = 'delivery' }
 function openShip() { ttn.value = ''; modal.value = 'ship' }
+function openReturn() { returnReason.value = ''; modal.value = 'return' }
 function openCancel() { cancelReason.value = ''; modal.value = session.staff ? 'cancel' : 'client-cancel' }
 function approve(value) { approval.approved = value; approval.comment = ''; modal.value = 'approval' }
 function submitApproval() {
@@ -166,41 +176,59 @@ const guide = computed(() => {
     case 'diagnostics':
       return { title: 'Складіть кошторис',
         text: o.diagnostics ? `У кошторисі ${estimateRows.value.length} поз. на ${money(o.total_cost)}. Коли все готово, надішліть клієнту.` : 'Внесіть висновок діагностики, додайте роботи й запчастини.',
-        actions: only([{ label: 'Надіслати кошторис клієнту', kind: 'primary', run: () => transition('waiting_approval'), disabled: !o.diagnostics }, cancel]) }
+        actions: only([{ label: 'Надіслати кошторис клієнту', kind: 'primary', run: () => transition('waiting_approval'), disabled: !o.diagnostics || !estimateRows.value.length }, cancel]) }
     case 'waiting_approval':
+      if (o.client_approval_status === 'rejected' && started.value) return { title: 'Клієнт відмовився від доплати', tone: 'danger',
+        text: `${o.approval_comment ? o.approval_comment + '. ' : ''}Продовжте ремонт у погодженому обсязі (${money(o.approved_total)}) і приберіть додаткові позиції, або скасуйте ремонт.`,
+        actions: only([{ label: 'Продовжити ремонт', kind: 'primary', run: () => transition('in_repair') }, cancel]) }
       if (o.client_approval_status === 'rejected') return { title: 'Клієнт відхилив кошторис', text: o.approval_comment || 'Зв’яжіться з клієнтом і уточніть перелік робіт.', tone: 'danger',
         actions: only([{ label: 'Уточнити кошторис', kind: 'primary', run: () => transition('diagnostics') }, cancel]) }
       if (o.client_approval_status === 'approved') return { title: 'Кошторис погоджено', text: `Клієнт погодив ${money(o.total_cost)}. Можна починати роботи.`, tone: 'ok',
         actions: only([{ label: 'Почати ремонт', kind: 'primary', run: () => transition('in_repair') }, cancel]) }
       return { title: 'Очікуємо рішення клієнта', text: `Кошторис на ${money(o.total_cost)} надіслано ${since(o.stage_since)}.`, tone: 'wait',
         actions: [...(session.admin ? [{ label: 'Записати згоду', kind: 'primary', run: () => approve(true) }, { label: 'Записати відмову', run: () => approve(false) }] : []),
-          ...only([{ label: 'Уточнити кошторис', run: () => transition('diagnostics') }, cancel])] }
+          ...only([...(started.value ? [] : [{ label: 'Уточнити кошторис', run: () => transition('diagnostics') }]), cancel])] }
     case 'in_repair':
-      return { title: 'Виконайте ремонт', text: 'Після перевірки позначте пристрій готовим. Клієнт отримає сповіщення.',
+      if (o.client_approval_status === 'pending') return { title: 'Потрібна згода на доплату', tone: 'warn',
+        text: `Кошторис зріс до ${money(o.total_cost)}, клієнт погодив ${money(o.approved_total)}. Надішліть клієнту на погодження або приберіть додаткові позиції.`,
+        actions: only([{ label: 'Надіслати на погодження', kind: 'primary', run: () => transition('waiting_approval') }, cancel]) }
+      if (o.client_approval_status === 'rejected') return { title: 'Приберіть додаткові позиції', tone: 'warn',
+        text: `Клієнт погодив лише ${money(o.approved_total)}. Видаліть позиції понад цю суму, щоб завершити ремонт.`, actions: only([cancel]) }
+      return { title: 'Виконайте ремонт', text: 'Після перевірки позначте пристрій готовим. Знайшли ще несправність? Додайте її в кошторис: доплату погодить клієнт.',
         actions: only([{ label: 'Готова до видачі', kind: 'primary', run: () => transition('ready_for_pickup') }, cancel]) }
-    case 'ready_for_pickup':
+    case 'ready_for_pickup': {
+      const giveBack = { label: 'Повернути без видачі', run: openReturn }
       if (due.value > 0) return { title: 'Прийміть оплату', text: `До сплати ${money(due.value)}. Після оплати заявку можна ${shipping.value ? 'відправити Новою Поштою' : 'завершити'}.`, tone: 'warn',
-        actions: only([{ label: `Прийняти оплату ${money(due.value)}`, kind: 'primary', run: openPayment }]) }
+        actions: only([{ label: `Прийняти оплату ${money(due.value)}`, kind: 'primary', run: openPayment }, giveBack]) }
       if (shipping.value && !o.delivery_ttn) return { title: 'Відправте Новою Поштою', text: `${o.delivery_city}, ${o.delivery_branch}. Оформіть накладну й внесіть її номер.`, tone: 'warn',
-        actions: only([{ label: 'Внести номер накладної', kind: 'primary', run: openShip }]) }
+        actions: only([{ label: 'Внести номер накладної', kind: 'primary', run: openShip }, giveBack]) }
       if (shipping.value) return { title: 'Пристрій відправлено', text: `Накладна ${o.delivery_ttn}. Завершіть заявку, щоб почався гарантійний строк.`, tone: 'ok',
         actions: only([{ label: 'Завершити заявку', kind: 'primary', run: () => transition('completed') }]) }
       return { title: 'Видайте пристрій', text: 'Оплату отримано. Завершіть заявку, щоб почався гарантійний строк.', tone: 'ok',
-        actions: only([{ label: 'Завершити й видати', kind: 'primary', run: () => transition('completed') }]) }
+        actions: only([{ label: 'Завершити й видати', kind: 'primary', run: () => transition('completed') }, giveBack]) }
+    }
+    case 'cancelled':
+      if (shipping.value && !o.delivery_ttn) return { title: 'Поверніть пристрій Новою Поштою', text: `${o.delivery_city}, ${o.delivery_branch}. Оформіть накладну й внесіть її номер, потім закрийте заявку.`, tone: 'warn',
+        actions: only([{ label: 'Внести номер накладної', kind: 'primary', run: openShip }]) }
+      return { title: 'Поверніть пристрій клієнту', tone: 'warn',
+        text: shipping.value ? `Накладна ${o.delivery_ttn}. Закрийте заявку.` : 'Ремонт не виконується, пристрій ще в сервісі. Коли клієнт його забере, позначте це.',
+        actions: only([{ label: 'Пристрій повернуто', kind: 'primary', run: openReturn }]) }
   }
   return null
 })
 
 // Стан ремонту для клієнта: базові тексти з domain.js, уточнені сумою, доставкою й гарантією.
-const heroIcons = { registered: Inbox, diagnostics: Search, waiting_approval: CircleDollarSign, in_repair: Wrench, ready_for_pickup: PackageCheck, completed: BadgeCheck, cancelled: CircleX }
-const heroTones = { waiting_approval: 'warn', ready_for_pickup: 'ok', completed: 'ok', cancelled: 'muted' }
+const heroIcons = { registered: Inbox, diagnostics: Search, waiting_approval: CircleDollarSign, in_repair: Wrench, ready_for_pickup: PackageCheck, completed: BadgeCheck, cancelled: CircleX, returned: PackageCheck }
+const heroTones = { waiting_approval: 'warn', ready_for_pickup: 'ok', completed: 'ok', cancelled: 'muted', returned: 'muted' }
 const hero = computed(() => {
   const o = item.value
   if (!o) return null
   let [title, text] = stageNotes[o.status]
   let icon = heroIcons[o.status], tone = heroTones[o.status] || ''
   if (o.status === 'waiting_approval') {
-    if (o.client_approval_status === 'rejected') { title = 'Кошторис відхилено'; text = 'Майстер уточнить перелік робіт і зв’яжеться з вами.'; icon = CircleX; tone = 'danger' }
+    if (o.client_approval_status === 'rejected' && started.value) { title = 'Доплату відхилено'; text = `Майстер завершить ремонт у погодженому раніше обсязі (${money(o.approved_total)}).`; icon = CircleX; tone = 'danger' }
+    else if (o.client_approval_status === 'rejected') { title = 'Кошторис відхилено'; text = 'Майстер уточнить перелік робіт і зв’яжеться з вами. Якщо ремонт не потрібен, заявку можна скасувати.'; icon = CircleX; tone = 'danger' }
+    else if (started.value) { title = 'Потрібна згода на доплату'; text = `Під час ремонту виявлено ще несправність. Нова сума ${money(o.total_cost)}, раніше погоджено ${money(o.approved_total)}. Без вашої згоди додаткові роботи не виконуватимуться.` }
     else text = `Ремонт коштуватиме ${money(o.total_cost)}. Перегляньте кошторис нижче: без вашої згоди роботи не почнуться.`
   }
   if (o.status === 'ready_for_pickup') {
@@ -251,7 +279,7 @@ const hero = computed(() => {
             <div><dt>На цьому етапі</dt><dd>{{ ageLabel(item.stage_since) }}</dd></div>
             <div><dt>Прийнято</dt><dd>{{ date(item.created_at) }}</dd></div>
           </dl>
-          <div v-if="item.status === 'registered'" class="actions">
+          <div v-if="clientCanCancel" class="actions">
             <button class="button" @click="openCancel"><CircleX :size="17"/> Скасувати заявку</button>
           </div>
         </div>
@@ -263,6 +291,11 @@ const hero = computed(() => {
         <div><strong>Гарантійний випадок</strong><p>Роботи й запчастини за цією заявкою безкоштовні для клієнта.</p></div>
       </div>
       <Warranty v-else-if="earlierWarranty" :warranty="earlierWarranty"/>
+      <div v-if="item.warranty_claim && !item.is_warranty_case && active" class="alert warranty">
+        <ShieldCheck :size="22"/>
+        <div v-if="session.staff"><strong>Клієнт просить гарантійний ремонт</strong><p>Перевірте, чи несправність пов’язана з попереднім ремонтом. Якщо так, позначте «Гарантійний випадок» у блоці «Заявка».</p></div>
+        <div v-else><strong>Гарантійне звернення</strong><p>Майстер перевірить, чи випадок гарантійний. Якщо так, ремонт буде безкоштовним.</p></div>
+      </div>
 
       <section class="card">
         <div class="section-head"><h2>Хід ремонту</h2></div>
@@ -311,8 +344,8 @@ const hero = computed(() => {
                     <td><strong>{{ row.name }}</strong><small>{{ row.kind === 'work' ? 'Робота' : 'Запчастина' }}</small></td>
                     <td>{{ row.quantity }}</td>
                     <td v-if="staffWrite" class="row-action">
-                      <button v-if="draft" class="icon-button" :aria-label="row.kind === 'work' ? 'Видалити роботу' : 'Повернути запчастину на склад'" :disabled="busy" @click="removeRow(row)"><Trash2 :size="16"/></button>
-                      <button v-else-if="row.kind === 'part' && item.status === 'in_repair' && row.part.spec_upgrade_target" class="button small" @click="upgrade(row.part)"><Wrench :size="15"/> Оновити паспорт</button>
+                      <button v-if="row.kind === 'part' && item.status === 'in_repair' && row.part.spec_upgrade_target" class="button small" @click="upgrade(row.part)"><Wrench :size="15"/> Оновити паспорт</button>
+                      <button v-if="draft || diagnosing" class="icon-button" :aria-label="row.kind === 'work' ? 'Видалити роботу' : 'Повернути запчастину на склад'" :disabled="busy" @click="removeRow(row)"><Trash2 :size="16"/></button>
                     </td>
                     <td class="num">{{ money(row.sum) }}</td>
                   </tr>
@@ -320,6 +353,7 @@ const hero = computed(() => {
                 <tfoot>
                   <tr v-if="item.is_warranty_case"><td :colspan="staffWrite ? 3 : 2">Покривається гарантією</td><td class="num">−{{ money(Number(item.works_total) + Number(item.parts_total)) }}</td></tr>
                   <tr class="total"><td :colspan="staffWrite ? 3 : 2">Разом</td><td class="num">{{ money(item.total_cost) }}</td></tr>
+                  <tr v-if="started && Number(item.approved_total) !== Number(item.total_cost)"><td :colspan="staffWrite ? 3 : 2">Раніше погоджено клієнтом</td><td class="num">{{ money(item.approved_total) }}</td></tr>
                   <tr v-if="repaired"><td :colspan="staffWrite ? 3 : 2">Оплачено</td><td class="num">{{ money(item.paid_amount) }}</td></tr>
                   <tr v-if="repaired && due > 0" class="due"><td :colspan="staffWrite ? 3 : 2">Залишок до сплати</td><td class="num">{{ money(due) }}</td></tr>
                 </tfoot>
@@ -345,7 +379,8 @@ const hero = computed(() => {
               </div>
             </div>
 
-            <!-- Додавання позицій доступне лише під час діагностики -->
+            <!-- Позиції додають під час діагностики; під час ремонту — додаткові (доплату погоджує клієнт) -->
+            <p v-if="diagnosing && item.status === 'in_repair'" class="muted">Додаткові позиції понад погоджену суму потребуватимуть згоди клієнта.</p>
             <div v-if="diagnosing" class="estimate-add">
               <div class="segmented">
                 <button type="button" class="button small" :aria-pressed="addMode === 'work'" @click="addMode = 'work'">Додати роботу</button>
@@ -468,7 +503,7 @@ const hero = computed(() => {
                 <div><dt>Відділення</dt><dd>{{ item.delivery_branch }}</dd></div>
                 <div v-if="item.delivery_ttn"><dt>Накладна</dt><dd><a class="ttn" :href="tracking" target="_blank" rel="noopener">{{ item.delivery_ttn }}</a></dd></div>
               </dl>
-              <button v-if="staffWrite && item.status === 'ready_for_pickup' && !item.delivery_ttn && due <= 0" class="button" style="margin-top:10px" :disabled="busy" @click="openShip"><Truck :size="17"/> Внести номер накладної</button>
+              <button v-if="staffWrite && !item.delivery_ttn && ((item.status === 'ready_for_pickup' && due <= 0) || item.status === 'cancelled')" class="button" style="margin-top:10px" :disabled="busy" @click="openShip"><Truck :size="17"/> Внести номер накладної</button>
             </template>
           </section>
 
@@ -519,7 +554,8 @@ const hero = computed(() => {
 
     <Modal v-if="modal === 'client-cancel'" title="Скасувати заявку?" @close="modal = ''">
       <form class="form-stack" @submit.prevent="clientCancel">
-        <p>Пристрій ще не взяли в роботу, тож заявку можна скасувати. Якщо ви вже передали пристрій у центр, заберіть його за номером заявки.</p>
+        <p v-if="item.status === 'registered'">Пристрій ще не взяли в роботу, тож заявку можна скасувати. Якщо ви вже передали пристрій у центр, заберіть його за номером заявки.</p>
+        <p v-else>Ви відмовилися від кошторису. Після скасування заберіть пристрій у сервісному центрі або дочекайтеся відправки Новою Поштою.</p>
         <label>Причина (необов’язково)
           <textarea v-model.trim="cancelReason" maxlength="1000" placeholder="Наприклад: проблема зникла"></textarea>
         </label>
@@ -529,11 +565,23 @@ const hero = computed(() => {
 
     <Modal v-if="modal === 'cancel'" title="Скасувати заявку?" @close="modal = ''">
       <form class="form-stack" @submit.prevent="transition('cancelled', cancelReason)">
-        <p>Зарезервовані запчастини буде повернено на склад.</p>
+        <p v-if="started">Ремонт уже розпочато: встановлені запчастини не повертаються на склад. Невикористані приберіть з кошторису до скасування.</p>
+        <p v-else>Зарезервовані запчастини буде повернено на склад.</p>
         <label>Причина скасування
-          <textarea v-model.trim="cancelReason" :required="item.status === 'in_repair'" maxlength="4000"></textarea>
+          <textarea v-model.trim="cancelReason" :required="started" maxlength="4000"></textarea>
         </label>
         <button class="button danger" :disabled="busy">Підтвердити скасування</button>
+      </form>
+    </Modal>
+
+    <Modal v-if="modal === 'return'" title="Повернути пристрій клієнту" @close="modal = ''">
+      <form class="form-stack" @submit.prevent="transition('returned', returnReason)">
+        <p v-if="item.status === 'ready_for_pickup'">Пристрій віддають без звичайної видачі: клієнт його не забирає або відмовився платити. Гарантія за цією заявкою не діє.</p>
+        <p v-else>Заявку буде закрито: пристрій повернуто клієнту без ремонту.</p>
+        <label>{{ item.status === 'ready_for_pickup' ? 'Причина' : 'Коментар (необов’язково)' }}
+          <textarea v-model.trim="returnReason" :required="item.status === 'ready_for_pickup'" maxlength="4000"></textarea>
+        </label>
+        <button class="button primary" :disabled="busy">Закрити заявку</button>
       </form>
     </Modal>
 

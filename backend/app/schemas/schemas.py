@@ -10,7 +10,7 @@ Count = Annotated[int, Field(ge=0, le=100000)]
 Positive = Annotated[int, Field(gt=0, le=100000)]
 Specs = dict[Annotated[str, StringConstraints(min_length=1, max_length=80)], Annotated[str, StringConstraints(max_length=160)]]
 Category = Literal["Ноутбук", "ПК", "Моноблок", "Міні-ПК", "Смартфон", "Планшет", "Смарт-годинник", "Консоль", "Монітор", "ДБЖ"]
-Stage = Literal["registered", "diagnostics", "waiting_approval", "in_repair", "ready_for_pickup", "completed", "cancelled"]
+Stage = Literal["registered", "diagnostics", "waiting_approval", "in_repair", "ready_for_pickup", "completed", "cancelled", "returned"]
 
 def normalize_phone(value):
     """Приводить 050 123-45-67, 0501234567 і 380501234567 до єдиного вигляду +380501234567."""
@@ -98,6 +98,11 @@ class Upgrade(Input):
     change_reason: Long = ""
     order_id: Positive | None = None
 
+class OwnerTransfer(Input):
+    """Пристрій продали або подарували: паспорт переходить до іншого клієнта."""
+    owner_id: Positive
+    reason: Long = ""
+
 class Defect(Input):
     description: Long = Field(min_length=3)
 
@@ -137,6 +142,7 @@ class OrderCreate(Input):
     cosmetic_notes: Long = ""
     priority: Literal["normal", "urgent"] = "normal"
     is_warranty_case: bool = False
+    warranty_claim: bool = False  # клієнт просить гарантійний ремонт; рішення за працівником
     delivery: Delivery | None = None
 
 class OrderEdit(Input):

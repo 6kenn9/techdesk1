@@ -111,6 +111,7 @@ scripts\restore.bat backups\techdesk_2026-11-10_18-40.sql
 
 ```powershell
 cd backend
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 $env:TEST_DATABASE_URL = 'postgresql+psycopg://techdesk:techdesk@localhost:5432/techdesk_test'
 .\.venv\Scripts\python.exe -m pytest -q
 ```

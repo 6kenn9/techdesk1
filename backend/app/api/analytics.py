@@ -1,29 +1,50 @@
 from collections import Counter, defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 from fastapi import APIRouter
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from ..core.security import Admin, Db, fail
 from ..models.models import Device, Order, OrderPart, Part, Payment, User, now
-from ..services.domain import ACTIVE, LABELS, local_date, stage_started
+from ..services.domain import ACTIVE, LABELS, local_date, preload, stage_started
 
 STALE_DAYS = 3
 APPROVAL_WAIT_DAYS = 2
 
 router = APIRouter(prefix="/api/analytics")
+KYIV = ZoneInfo("Europe/Kyiv")
+
+def day_start(day):
+    """Початок доби за київським часом як момент часу (для порівняння з полями timestamptz)."""
+    return datetime.combine(day, time(), KYIV)
+
+def period_orders(start, end):
+    """Заявки, потрібні звіту: активні, прийняті за період і завершені за період або попередній такий самий.
+    Точний відбір за київською датою робить dashboard; тут лише відсікаються явно зайві рядки."""
+    if not start and not end:
+        return select(Order)
+    def window(column, low):
+        clauses = [column >= day_start(low)] if low else []
+        if end:
+            clauses.append(column < day_start(end + timedelta(days=1)))
+        return and_(*clauses)
+    completed_from = start - timedelta(days=(end - start).days + 1) if start and end else start
+    return select(Order).where(or_(Order.status.in_(ACTIVE), window(Order.created_at, start),
+                                   window(Order.completed_at, completed_from)))
 
 @router.get("/dashboard")
 def dashboard(db: Db, user: Admin, start: date | None = None, end: date | None = None):
     if start and end and start > end:
         fail(422, "Дата початку має передувати даті завершення.")
-    all_orders = list(db.scalars(select(Order).order_by(Order.id)))
+    all_orders = list(db.scalars(period_orders(start, end).order_by(Order.id)))
     def in_period(value):
         day = local_date(value)
         return (not start or day >= start) and (not end or day <= end)
     finished = [o for o in all_orders if o.status == "completed" and o.completed_at and in_period(o.completed_at)]
     intake = [o for o in all_orders if in_period(o.created_at)]
+    completed_ids = [o.id for o in all_orders if o.status == "completed"]
     costs = dict(db.execute(select(OrderPart.order_id, func.sum(OrderPart.unit_cost_price * OrderPart.quantity))
-                            .group_by(OrderPart.order_id)).all())
+                            .where(OrderPart.order_id.in_(completed_ids)).group_by(OrderPart.order_id)).all()) if completed_ids else {}
     revenue = sum((o.total_cost for o in finished), Decimal(0))
     cost = sum((costs.get(o.id, 0) for o in finished), Decimal(0))
     daily = defaultdict(lambda: {"revenue": Decimal(0), "parts_cost": Decimal(0), "profit": Decimal(0)})
@@ -54,7 +75,9 @@ def dashboard(db: Db, user: Admin, start: date | None = None, end: date | None =
     rated = [o for o in finished if o.rating is not None]
     def average_rating(items):
         return round(sum(o.rating for o in items) / len(items), 2) if items else None
-    device_categories = dict(db.execute(select(Device.id, Device.device_category)).all())
+    intake_devices = {o.device_id for o in intake}
+    device_categories = dict(db.execute(select(Device.id, Device.device_category)
+                                        .where(Device.id.in_(intake_devices))).all()) if intake_devices else {}
     return {
         "previous": previous, "completed": len(finished), "attention": attention(db, all_orders),
         "payment_methods": methods,
@@ -82,12 +105,13 @@ def attention(db, orders):
     """Що потребує реакції адміністратора: застряглі заявки, мовчання клієнта, дефіцит деталей."""
     active = [o for o in orders if o.status in ACTIVE]
     since = stage_started(db, [o.id for o in active])
+    devices, people = preload(db, active)
     today = local_date(now())
     stale, waiting = [], []
     for order in active:
         days = (today - local_date(since.get(order.id, order.created_at))).days
-        device = db.get(Device, order.device_id)
-        master = db.get(User, order.master_id) if order.master_id else None
+        device = devices[order.device_id]
+        master = people.get(order.master_id)
         item = {"id": order.id, "order_number": order.order_number, "device": f"{device.brand} {device.model}",
                 "status": order.status, "label": LABELS[order.status], "days": days,
                 "master": master.full_name if master else None}
