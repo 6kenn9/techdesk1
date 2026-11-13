@@ -140,7 +140,6 @@ onUnmounted(() => {
         <span class="actions">
           <NotificationBell v-if="session.staff" />
           <ThemeToggle />
-          <span class="role-chip">{{ roles[session.user.role] }}</span>
         </span>
       </header>
       <main class="content">
