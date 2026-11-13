@@ -35,3 +35,6 @@
 
 /* Перехід за пунктом меню головної: розділ не ховається під липкою шапкою */
 .landing section[id], .landing footer[id] { scroll-margin-top: 72px; }
+
+/* Аналітика: порожня смуга способу оплати без «кульки» */
+.pay-bar i { padding: 0; min-width: 0; }

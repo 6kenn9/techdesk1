@@ -300,7 +300,7 @@ onMounted(() => choose('quarter'))
                 <component :is="row.icon" :size="16" />
                 {{ row.label }}
               </span>
-              <div class="pay-bar"><i :class="row.key" :style="{ width: row.share + '%' }"></i></div>
+              <div class="pay-bar"><i v-if="row.share > 0" :class="row.key" :style="{ width: row.share + '%' }"></i></div>
               <strong class="mono">{{ money(row.value) }}</strong>
               <small>{{ row.share }}%</small>
             </div>
