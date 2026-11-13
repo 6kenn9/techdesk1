@@ -289,9 +289,6 @@ onMounted(async () => {
         </div>
 
         <div class="card service-table-card" role="tabpanel">
-          <div class="service-table-intro">
-            <h3>{{ currentService.name }}</h3>
-          </div>
           <div class="table-scroll">
             <table>
               <thead>
