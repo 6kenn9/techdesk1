@@ -47,17 +47,6 @@ async function connect() {
     busy.value = false
   }
 }
-async function test() {
-  busy.value = true
-  try {
-    await api('/auth/telegram-test', { method: 'POST' })
-    session.notify('Тестове повідомлення надіслано в Telegram.')
-  } catch (e) {
-    session.notify(e.message, 'error')
-  } finally {
-    busy.value = false
-  }
-}
 // Пауза лише зупиняє повідомлення; чат лишається прив'язаним, тож увімкнути можна одним натиском.
 async function setNotifications(enabled) {
   busy.value = true
@@ -89,7 +78,6 @@ async function disconnect() {
       <span v-if="session.user.telegram_linked">{{ session.user.telegram_muted ? 'Telegram: сповіщення на паузі' : 'Telegram підключено' }}</span>
       <span v-else-if="waiting">Очікуємо підтвердження…</span>
       <button v-if="session.user.telegram_muted" class="link-button" :disabled="busy" @click="setNotifications(true)">Увімкнути</button>
-      <button v-else-if="session.user.telegram_linked" class="link-button" :disabled="busy" @click="test">Перевірити</button>
       <button v-else class="link-button" :disabled="busy" @click="connect">Підключити Telegram</button>
     </div>
     <section v-else class="card telegram-card">
@@ -111,10 +99,6 @@ async function disconnect() {
         <button class="button" :disabled="busy" @click="disconnect">Відключити Telegram</button>
       </span>
       <span v-else-if="session.user.telegram_linked" class="actions">
-        <button class="button" :disabled="busy" @click="test">
-          <BellRing :size="16" />
-          Тестове повідомлення
-        </button>
         <button class="button" :disabled="busy" @click="setNotifications(false)">Призупинити</button>
         <button class="button" :disabled="busy" @click="disconnect">Відключити</button>
       </span>

@@ -265,7 +265,6 @@ onMounted(async () => {
         <div class="landing-section-head">
           <div>
             <h2 id="services-title">Послуги та орієнтовний прайс</h2>
-            <p>Оберіть тип пристрою, щоб переглянути основні види робіт, терміни виконання та гарантію.</p>
           </div>
           <RouterLink :to="session.user ? '/orders/new' : '/quick'" class="button">
             Оформити заявку
@@ -292,7 +291,6 @@ onMounted(async () => {
         <div class="card service-table-card" role="tabpanel">
           <div class="service-table-intro">
             <h3>{{ currentService.name }}</h3>
-            <p>{{ currentService.desc }}</p>
           </div>
           <div class="table-scroll">
             <table>
@@ -327,7 +325,6 @@ onMounted(async () => {
           <div class="landing-section-head">
             <div>
               <h2 id="advantages-title">Чому клієнти обирають наш сервіс</h2>
-              <p>Прозорий облік пристроїв, запчастин і вартості на кожному етапі обслуговування.</p>
             </div>
           </div>
 
@@ -348,7 +345,6 @@ onMounted(async () => {
         <div class="landing-section-head">
           <div>
             <h2 id="workflow-title">Як відбувається ремонт</h2>
-            <p>Чотири послідовні кроки від приймання техніки до видачі готового замовлення.</p>
           </div>
         </div>
 
@@ -434,11 +430,11 @@ onMounted(async () => {
             </li>
             <li>
               <Phone :size="15" />
-              <span class="mono">+380 (44) 290-45-18</span>
+              <span>+380 (44) 290-45-18</span>
             </li>
             <li>
               <Phone :size="15" />
-              <span class="mono">+380 (67) 510-22-90</span>
+              <span>+380 (67) 510-22-90</span>
             </li>
             <li>
               <Clock :size="15" />
@@ -449,7 +445,7 @@ onMounted(async () => {
       </div>
       <div class="wrap footer-bottom">
         <span>© 2026 Сервісний центр TechDesk.</span>
-        <span class="mono">Паспортизація техніки · Облік робіт · Склад · PDF-документи</span>
+        <span>Паспортизація техніки · Облік робіт · Склад · PDF-документи</span>
       </div>
     </footer>
   </div>
