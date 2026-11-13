@@ -78,7 +78,7 @@ async function disconnect() {
       <span v-if="session.user.telegram_linked">{{ session.user.telegram_muted ? 'Telegram: сповіщення на паузі' : 'Telegram підключено' }}</span>
       <span v-else-if="waiting">Очікуємо підтвердження…</span>
       <button v-if="session.user.telegram_muted" class="link-button" :disabled="busy" @click="setNotifications(true)">Увімкнути</button>
-      <button v-else class="link-button" :disabled="busy" @click="connect">Підключити Telegram</button>
+      <button v-else-if="!session.user.telegram_linked" class="link-button" :disabled="busy" @click="connect">Підключити Telegram</button>
     </div>
     <section v-else class="card telegram-card">
       <div>
