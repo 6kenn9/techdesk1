@@ -149,7 +149,10 @@ def users(db: Db, user: Staff, role: str | None = None):
         query = query.where(User.role != "admin", User.is_active.is_(True))
     workload = dict(db.execute(select(Order.master_id, func.count(Order.id))
                                .where(Order.status.in_(ACTIVE)).group_by(Order.master_id)).all())
-    return [dict(public_user(item), active_orders=workload.get(item.id, 0)) for item in db.scalars(query)]
+    in_service = dict(db.execute(select(Order.client_id, func.count(Order.id))
+                                 .where(Order.status.in_(ACTIVE)).group_by(Order.client_id)).all())
+    return [dict(public_user(item), active_orders=(in_service if item.role == "client" else workload).get(item.id, 0))
+            for item in db.scalars(query)]
 
 @router.post("/users", status_code=201)
 def add_user(payload: StaffRegistration, db: Db, user: Admin):

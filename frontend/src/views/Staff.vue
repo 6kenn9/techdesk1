@@ -6,7 +6,7 @@ import { categories, categorySpecs, roles, specLabels } from '../domain'
 import { useSession } from '../state'
 import Modal from '../components/Modal.vue'
 const session = useSession(),
-  tab = ref('users'),
+  tab = ref('team'),
   modal = ref(''),
   selected = ref(null),
   form = ref({}),
@@ -14,6 +14,12 @@ const session = useSession(),
   error = ref('')
 const users = ref([]),
   presets = ref([])
+const team = computed(() => users.value.filter((u) => u.role !== 'client'))
+const clients = computed(() => users.value.filter((u) => u.role === 'client'))
+const staffRoles = { master: roles.master, admin: roles.admin }
+const tabs = { team: 'Команда', clients: 'Клієнти', presets: 'Довідник моделей' }
+const counts = computed(() => ({ team: team.value.length, clients: clients.value.length, presets: presets.value.length }))
+const newLabel = computed(() => ({ team: 'Новий працівник', clients: 'Новий клієнт', presets: 'Нова модель' })[tab.value])
 const fields = computed(() => [...new Set([...(categorySpecs[form.value.device_category] || []), ...Object.keys(form.value.default_specs || {})])])
 async function load() {
   try {
@@ -30,7 +36,7 @@ function open(kind, item = null) {
   if (kind === 'user') {
     form.value = item
       ? { is_active: item.is_active, specialization: item.specialization }
-      : { full_name: '', email: '', phone: '', password: '', role: 'master', specialization: '' }
+      : { full_name: '', email: '', phone: '', password: '', role: tab.value === 'clients' ? 'client' : 'master', specialization: '' }
   } else {
     form.value = {
       device_category: item?.device_category || 'Ноутбук',
@@ -96,45 +102,49 @@ async function save() {
 <template>
   <div class="page-head">
     <div class="page-title">
-      <h1>Команда та довідники</h1>
-      <span class="count">{{ tab === 'users' ? users.length : presets.length }}</span>
+      <h1>{{ tabs[tab] }}</h1>
+      <span class="count">{{ counts[tab] }}</span>
     </div>
-    <button class="button primary" @click="open(tab === 'users' ? 'user' : 'preset')">
+    <button class="button primary" @click="open(tab === 'presets' ? 'preset' : 'user')">
       <Plus :size="16" />
-      {{ tab === 'users' ? 'Новий користувач' : 'Нова модель' }}
+      {{ newLabel }}
     </button>
   </div>
   <div class="tabs">
-    <button class="tab" :class="{ active: tab === 'users' }" @click="tab = 'users'">Користувачі</button>
-    <button class="tab" :class="{ active: tab === 'presets' }" @click="tab = 'presets'">Довідник моделей</button>
+    <button v-for="(name, key) in tabs" :key="key" class="tab" :class="{ active: tab === key }" @click="tab = key">
+      {{ name }}
+    </button>
   </div>
   <p v-if="error" class="error">{{ error }}</p>
   <section class="card">
     <div class="table-scroll">
-      <table v-if="tab === 'users'">
+      <table v-if="tab !== 'presets'">
         <thead>
           <tr>
-            <th>Користувач</th>
-            <th>Роль</th>
+            <th>{{ tab === 'team' ? 'Працівник' : 'Клієнт' }}</th>
+            <th v-if="tab === 'team'">Роль</th>
             <th>Контакти</th>
-            <th>Активні заявки</th>
+            <th>{{ tab === 'team' ? 'Активні заявки' : 'Заявки в роботі' }}</th>
             <th>Доступ</th>
             <th>Дія</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="item in users" :key="item.id">
+          <tr v-if="!(tab === 'team' ? team : clients).length">
+            <td colspan="6" class="muted">{{ tab === 'team' ? 'Працівників ще немає.' : 'Клієнтів ще немає.' }}</td>
+          </tr>
+          <tr v-for="item in tab === 'team' ? team : clients" :key="item.id">
             <td>
               <strong>{{ item.full_name }}</strong>
               <small>{{ item.specialization }}</small>
             </td>
-            <td>{{ roles[item.role] }}</td>
+            <td v-if="tab === 'team'">{{ roles[item.role] }}</td>
             <td>
               {{ item.email || 'без пошти (гостьовий кабінет)' }}
               <small class="mono">{{ item.phone }}</small>
               <small v-if="item.telegram_linked" class="tg-linked">Telegram підключено</small>
             </td>
-            <td>{{ item.role === 'master' ? item.active_orders : '—' }}</td>
+            <td>{{ item.role === 'admin' || (item.role === 'client' && !item.active_orders) ? '—' : item.active_orders }}</td>
             <td>
               <span class="status" :class="item.is_active ? 'completed' : 'cancelled'">{{ item.is_active ? 'Активний' : 'Вимкнено' }}</span>
             </td>
@@ -176,7 +186,7 @@ async function save() {
       </table>
     </div>
   </section>
-  <Modal v-if="modal && modal !== 'password'" :title="modal === 'user' ? 'Обліковий запис' : 'Модель пристрою'" @close="modal = ''">
+  <Modal v-if="modal && modal !== 'password'" :title="modal === 'user' ? (form.role === 'client' || selected?.role === 'client' ? 'Обліковий запис клієнта' : 'Обліковий запис працівника') : 'Модель пристрою'" @close="modal = ''">
     <form class="form-grid" @submit.prevent="save">
       <template v-if="modal === 'user'">
         <template v-if="!selected">
@@ -196,10 +206,10 @@ async function save() {
             Тимчасовий пароль
             <input v-model="form.password" type="password" minlength="8" required />
           </label>
-          <label>
+          <label v-if="form.role !== 'client'">
             Роль
             <select v-model="form.role">
-              <option v-for="(name, key) in roles" :key="key" :value="key">{{ name }}</option>
+              <option v-for="(name, key) in staffRoles" :key="key" :value="key">{{ name }}</option>
             </select>
           </label>
         </template>
@@ -207,7 +217,7 @@ async function save() {
           <input v-model="form.is_active" type="checkbox" />
           Активний обліковий запис
         </label>
-        <label class="full">
+        <label v-if="selected ? selected.role !== 'client' : form.role !== 'client'" class="full">
           Спеціалізація
           <input v-model.trim="form.specialization" maxlength="180" />
         </label>

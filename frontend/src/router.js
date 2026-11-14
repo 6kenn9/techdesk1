@@ -28,7 +28,7 @@ export function makeRouter(pinia) {
       { path: '/login', component: Auth },
       { path: '/register', component: Auth },
       { path: '/analytics', component: Analytics, meta: { roles: ['admin'], label: 'Аналітика' } },
-      { path: '/staff', component: Staff, meta: { roles: ['admin'], label: 'Команда' } },
+      { path: '/staff', component: Staff, meta: { roles: ['admin'], label: 'Адміністрування' } },
       { path: '/warehouse', component: Warehouse, meta: { roles: ['admin', 'master'], label: 'Склад і послуги' } },
       { path: '/orders', component: Orders, meta: { roles: ['admin', 'master'], label: 'Журнал заявок' } },
       { path: '/orders/intake', component: Intake, meta: { roles: ['admin', 'master'], label: 'Швидке приймання' } },

@@ -35,7 +35,7 @@ const links = [
   ["/passports", "Паспорти пристроїв", Cpu, ["admin", "master", "client"]],
   ["/scan", "Сканер", ScanLine, ["admin", "master"]],
   ["/warehouse", "Склад і послуги", Boxes, ["admin", "master"]],
-  ["/staff", "Команда", UsersRound, ["admin"]],
+  ["/staff", "Адміністрування", UsersRound, ["admin"]],
   ["/profile", "Профіль", UserRound, ["admin", "master", "client"]],
 ];
 // Позначка біля «Мого дня»: скільки заявок чекає на дію майстра. Оновлюється при переході між сторінками й раз на хвилину.
