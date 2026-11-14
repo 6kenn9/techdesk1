@@ -23,11 +23,15 @@
 .google-slot { display: flex; justify-content: center; min-height: 44px; color-scheme: light; }
 
 /* Головна: замість пошуку — дії та коротка інформація */
-.hero-cta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
-.hero-facts { list-style: none; padding: 0; margin: 18px 0 0; display: flex; flex-wrap: wrap; gap: 8px 22px; color: var(--muted); font-size: .92rem; }
-.hero-facts li { display: inline-flex; align-items: center; gap: 7px; }
-.hero-facts svg { color: var(--accent, currentColor); flex: none; }
-.hero-cta + .hero-facts + .tracker-card, .hero-facts + .hero-highlights { margin-top: 22px; }
+.hero-clean { padding-block: 72px 60px; }
+.hero-clean-head p { margin-top: 16px; }
+.hero-cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
+.hero-cta ~ .tracker-card, .hero-cta ~ .hero-highlights { margin-top: 26px; }
+.hero-highlights > div { padding: 18px 20px; }
+@media (max-width: 650px) {
+  .hero-clean { padding-block: 36px 30px; }
+  .hero-cta ~ .tracker-card, .hero-cta ~ .hero-highlights { margin-top: 12px; }
+}
 
 /* Кабінет: етап і «Оцінити ремонт» з відступом, на вузькому екрані — одне під одним */
 .result-cell { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
