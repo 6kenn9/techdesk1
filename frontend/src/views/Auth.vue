@@ -23,6 +23,8 @@ const googleName = ref("");
 // Кабінет із цією поштою вже є: власник один раз підтверджує пароль, щоб пов’язати з ним вхід через Google.
 const googlePassword = ref("");
 const googleLinkEmail = ref("");
+const googleCanReset = ref(false);
+const googleReset = ref(false);
 async function finish() {
   const next = route.query.next;
   await router.push(
@@ -38,6 +40,7 @@ async function sendGoogle() {
     const data = { credential: googleCredential.value };
     if (googlePhone.value) data.phone = googlePhone.value;
     if (googlePassword.value) data.password = googlePassword.value;
+    if (googleReset.value) data.reset_password = true;
     const response = await api("/auth/google", { method: "POST", data });
     if (response.needs_phone) {
       googleName.value = response.full_name;
@@ -45,6 +48,7 @@ async function sendGoogle() {
     }
     if (response.needs_password) {
       googleLinkEmail.value = response.email;
+      googleCanReset.value = !!response.can_reset;
       return;
     }
     await session.accept(response);
@@ -53,7 +57,14 @@ async function sendGoogle() {
     error.value = e.message;
   } finally {
     busy.value = false;
+    googleReset.value = false;
   }
+}
+function linkWithoutPassword() {
+  if (!confirm("Кабінет буде прив’язано до Google. Старий пароль перестане діяти, а інші сеанси буде завершено. Надалі входьте кнопкою Google. Продовжити?")) return;
+  googlePassword.value = "";
+  googleReset.value = true;
+  sendGoogle();
 }
 function onGoogle(response) {
   googleCredential.value = response.credential;
@@ -243,6 +254,9 @@ async function submit() {
             <button class="button primary wide" :disabled="busy">
               Пов’язати й увійти
               <ArrowRight :size="17" />
+            </button>
+            <button v-if="googleCanReset" type="button" class="link-button" :disabled="busy" @click="linkWithoutPassword">
+              Не знаю пароля — кабінет створено через Google
             </button>
           </form>
           <div v-else ref="googleButton" class="google-slot"></div>

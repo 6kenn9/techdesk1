@@ -69,8 +69,17 @@ def google_login(payload: GoogleLogin, db: Db, request: Request):
         if not user.google_linked:
             # Пошту під час реєстрації не підтверджують, тож кабінет на цю адресу міг створити хтось інший.
             # Тому Google не впускає в наявний кабінет автоматично: власник один раз підтверджує пароль.
+            if payload.reset_password and user.role == "client":
+                # Google підтвердив, що пошта належить цій людині. Якщо кабінет на цю адресу раніше створив хтось
+                # інший, його пароль і сеанси після прив'язки більше не діють, тож власником лишається тільки вона.
+                user.password_hash = hasher.hash(secrets.token_urlsafe(32))
+                user.token_version = (user.token_version or 0) + 1
+                user.must_change_password = False
+                user.google_linked = True
+                db.commit()
+                return {"access_token": token(user), "user": public_user(user)}
             if not payload.password:
-                return {"needs_password": True, "email": email}
+                return {"needs_password": True, "email": email, "can_reset": user.role == "client"}
             password_key = (client_ip(request), email)
             if login_failures.blocked(password_key):
                 fail(429, "Забагато невдалих спроб входу. Спробуйте через 5 хвилин.")

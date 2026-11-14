@@ -37,6 +37,9 @@ class GoogleLogin(Input):
     phone: Phone | None = None
     # пароль наявного кабінету: потрібен один раз, щоб пов'язати з ним вхід через Google
     password: str | None = Field(default=None, min_length=1, max_length=128)
+    # клієнт не знає пароля (кабінет створено через Google до появи прив'язки або пароль забуто):
+    # кабінет переходить під Google, старий пароль і всі інші сеанси скасовуються
+    reset_password: bool = False
 
 class Registration(Login):
     full_name: str = Field(min_length=1, max_length=150)

@@ -798,6 +798,21 @@ def test_google_login(client, identities, monkeypatch):
     assert linked["user"]["id"] == admin_user["id"]
     # далі вхід через Google працює без пароля
     assert request(client, {}, "POST", "/auth/google", {"credential": token})["user"]["id"] == admin_user["id"]
+    # клієнт не знає пароля (кабінет створено через Google до появи прив'язки): прив'язка зі скиданням пароля
+    master, master_user = identities["master"]
+    claims["email"] = master_user["email"]
+    assert request(client, {}, "POST", "/auth/google", {"credential": token})["can_reset"] is False
+    assert request(client, {}, "POST", "/auth/google", {"credential": token, "reset_password": True})["needs_password"] is True
+    fresh = request(client, {}, "POST", "/auth/register", {"email": "google-old@techdesk.ua", "password": "unknown-pass",
+                    "full_name": "Кабінет до прив'язки", "phone": "+380631234987"}, 201)
+    old, client_user = {"Authorization": "Bearer " + fresh["access_token"]}, fresh["user"]
+    claims["email"] = client_user["email"]
+    assert request(client, {}, "POST", "/auth/google", {"credential": token})["can_reset"] is True
+    reset = request(client, {}, "POST", "/auth/google", {"credential": token, "reset_password": True})
+    assert reset["user"]["id"] == client_user["id"]
+    request(client, old, "GET", "/auth/me", status=401)  # старі сеанси завершено
+    assert request(client, {}, "POST", "/auth/google", {"credential": token})["user"]["id"] == client_user["id"]
+    request(client, {}, "POST", "/auth/login", {"email": "google-old@techdesk.ua", "password": "unknown-pass"}, 401)
     # непідтверджена пошта відхиляється самою перевіркою, вимкнений акаунт — тут
     claims["email"] = "newbie@gmail.com"
     request(client, admin, "PATCH", f"/users/{created['user']['id']}", {"is_active": False, "specialization": ""})
