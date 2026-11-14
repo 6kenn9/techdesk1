@@ -16,7 +16,6 @@ import {
   Monitor,
   Phone,
   ShieldCheck,
-  Truck,
   Smartphone,
   Watch,
   Wrench,
@@ -216,13 +215,6 @@ onMounted(async () => {
           <RouterLink v-if="!session.user" to="/login" class="button">Увійти в кабінет</RouterLink>
           <a href="#services" class="button">Послуги та ціни</a>
         </div>
-
-        <ul class="hero-facts">
-          <li><MapPin :size="16" /> м. Київ, вул. Політехнічна, 14</li>
-          <li><Clock :size="16" /> Пн–Пт 09:00–19:00, Сб 10:00–17:00</li>
-          <li><Phone :size="16" /> <span class="mono">+380 (44) 290-45-18</span></li>
-          <li><Truck :size="16" /> Повертаємо техніку Новою Поштою</li>
-        </ul>
 
         <!-- Статус за QR-кодом із квитанції: /track/TD-2026-0004 -->
         <div v-if="code" id="tracking" class="card tracker-card">
