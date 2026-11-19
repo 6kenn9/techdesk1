@@ -15,6 +15,10 @@ def normalize(data):
         with Image.open(BytesIO(data)) as source:
             if source.format not in FORMATS:
                 raise UnidentifiedImageError
+            # Розмір відомий із заголовка ще до розпакування: маленький файл може описувати гігантське зображення.
+            # Pillow сам відхиляє лише вдвічі більші за MAX_IMAGE_PIXELS, тож межу перевіряємо тут.
+            if source.width * source.height > Image.MAX_IMAGE_PIXELS:
+                fail(413, "Зображення завелике: до 50 мегапікселів.")
             image = ImageOps.exif_transpose(source).convert("RGB")
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError, ValueError):
         fail(422, "Завантажте зображення у форматі JPEG, PNG або WebP.")

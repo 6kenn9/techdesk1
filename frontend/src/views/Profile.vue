@@ -3,9 +3,10 @@ import { computed, reactive, ref } from 'vue'
 import { KeyRound } from 'lucide-vue-next'
 import { api, setToken } from '../api'
 import { roles } from '../domain'
+import { useRouter } from 'vue-router'
 import { useSession } from '../state'
 import TelegramConnect from '../components/TelegramConnect.vue'
-const session = useSession()
+const session = useSession(), router = useRouter()
 const form = reactive({ current_password: '', new_password: '', repeat: '' })
 const busy = ref(false),
   error = ref('')
@@ -17,10 +18,12 @@ async function change() {
   busy.value = true
   try {
     const result = await api('/auth/password', { method: 'POST', data: { current_password: form.current_password, new_password: form.new_password } })
+    const temporary = session.user.must_change_password
     setToken(result.access_token)
     session.user = result.user
     Object.assign(form, { current_password: '', new_password: '', repeat: '' })
     session.notify('Пароль змінено. На інших пристроях потрібно буде увійти знову.')
+    if (temporary) await router.push(session.home)  // після тимчасового пароля — до звичайної роботи
   } catch (e) {
     error.value = e.message
   } finally {
@@ -83,7 +86,8 @@ async function change() {
         <div class="actions">
           <button class="button primary" :disabled="busy">{{ busy ? 'Зберігаємо…' : 'Змінити пароль' }}</button>
         </div>
-        <p class="muted">Після зміни пароля сеанси на інших пристроях завершаться.</p>
+        <p class="muted">Після зміни пароля сеанси на інших пристроях завершаться.
+          Не пам’ятаєте поточного пароля або входите лише через Google? <RouterLink to="/reset">Задайте новий через пошту</RouterLink>.</p>
       </form>
     </section>
   </div>

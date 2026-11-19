@@ -2,8 +2,8 @@ from datetime import timedelta
 from decimal import Decimal
 from sqlalchemy import func, select, text
 from ..core.security import hasher
-from ..models.models import Device, ModelPreset, Order, Part, Service, StatusHistory, User, Work, now
-from .domain import STAGES, add_part, change_spec, new_order, refresh_totals, stock_move
+from ..models.models import Device, ModelPreset, Order, Part, Payment, Service, StatusHistory, User, Work, now
+from .domain import STAGES, add_part, change_spec, estimate_items, new_order, refresh_totals, stock_move
 
 PRESETS = [
     ("Ноутбук", "ASUS", "TUF Gaming F15 FX506HC", {"cpu":"Intel Core i5-11400H","ram":"8 GB DDR4","storage":"512 GB NVMe","gpu":"GeForce RTX 3050","display":"15,6″ · 144 Гц"}),
@@ -40,10 +40,10 @@ PARTS = [
 ]
 
 SERVICES = [
-    ("Діагностика ноутбука", 450), ("Чищення системи охолодження", 850), ("Заміна оперативної пам’яті", 550),
+    ("Діагностика ноутбука", 0), ("Чищення системи охолодження", 850), ("Заміна оперативної пам’яті", 550),
     ("Встановлення накопичувача", 650), ("Заміна акумулятора смартфона", 700), ("Заміна дисплейного модуля", 950),
     ("Відновлення роз’єму живлення", 1100), ("Налаштування операційної системи", 650), ("Заміна блока живлення", 580),
-    ("Відновлення після залиття", 1400), ("Діагностика ігрової консолі", 600), ("Відновлення даних", 1200),
+    ("Відновлення після залиття", 1400), ("Діагностика ігрової консолі", 0), ("Відновлення даних", 1200),
 ]
 
 # демонстраційні оцінки клієнтів для завершених заявок (ключ — індекс пристрою)
@@ -91,7 +91,7 @@ def seed(db):
     services = []
     for index, (name, price) in enumerate(SERVICES, 1):
         service = Service(code=f"SR-{index:03}", name=name, category="Ремонт і обслуговування",
-                          default_price=price, estimated_hours=Decimal("1.5"), warranty_days=90)
+                          default_price=price, estimated_hours=Decimal("1.5"), warranty_days=90 if price else 0)
         db.add(service)
         services.append(service)
     db.flush()
@@ -101,10 +101,10 @@ def seed(db):
         (4, "completed", 3, 8, 12, 9, "Комп’ютер перезавантажується під навантаженням."),
         (0, "waiting_approval", 1, 3, 2, 2, "Накопичувач працює нестабільно. Потрібно перевірити стан диска."),
         (1, "registered", None, None, None, 0, "Після падіння інколи пропадає зображення."),
-        (2, "diagnostics", 1, 0, None, 3, "Ноутбук перегрівається під час роботи."),
+        (2, "diagnostics", 1, 1, None, 3, "Ноутбук перегрівається під час роботи."),
         (3, "in_repair", 1, 4, 5, 4, "Акумулятор швидко розряджається."),
         (5, "ready_for_pickup", 2, 7, None, 5, "Потрібне відновлення налаштувань системи."),
-        (7, "diagnostics", 3, 10, None, 1, "Консоль не виводить зображення на екран."),
+        (7, "diagnostics", 3, None, None, 1, "Консоль не виводить зображення на екран."),
         (8, "registered", None, None, None, 0, "Мерехтіння дисплея на високій частоті."),
     ]
     for device_index, stage, master_index, service_index, part_index, age, description in examples:
@@ -126,21 +126,25 @@ def seed(db):
                 change_spec(db, device, part.spec_upgrade_target, part.spec_upgrade_value, master.id,
                             "Модернізація під час ремонту", order.id)
         refresh_totals(db, order)
-        order.status = stage
         if stage in STAGES[3:]:
             order.client_approval_status = "approved"
             order.approved_at = order.created_at + timedelta(hours=2)
             order.approved_total = order.total_cost
+            order.approved_items = estimate_items(db, order)
         if stage == "completed":
             order.completed_at = order.created_at + timedelta(days=1)
             order.warranty_expires_at = order.completed_at + timedelta(days=90)
             order.paid_amount = order.total_cost
+            if order.total_cost > 0:  # оплата — окремим записом, як під час звичайної видачі
+                db.add(Payment(order_id=order.id, amount=order.total_cost, method=("cash", "card", "transfer")[device_index % 3],
+                               created_by_id=order.master_id or users[0].id, created_at=order.completed_at))
             device.known_defects_history = [*device.known_defects_history, description]
             score, remark = REVIEWS[device_index]
             order.rating, order.rating_comment = score, remark
             order.rated_at = order.completed_at + timedelta(hours=5)
         if stage == "ready_for_pickup":
             order.delivery_method, order.delivery_city, order.delivery_branch = "nova_poshta", "Львів", "Відділення №12"
+        order.status = stage  # після дат і оцінки: база перевіряє, що завершена заявка має дату завершення
         for step in range(1, STAGES.index(stage) + 1):
             db.add(StatusHistory(order_id=order.id, changed_by_id=order.master_id or users[0].id,
                                  old_status=STAGES[step-1], new_status=STAGES[step],

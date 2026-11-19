@@ -2,7 +2,7 @@ from datetime import timedelta, timezone
 from decimal import Decimal
 from hashlib import sha256
 from zoneinfo import ZoneInfo
-from sqlalchemy import Integer, cast, func, select, text
+from sqlalchemy import Integer, and_, cast, func, or_, select, text
 from ..core.security import fail
 from ..models.models import Device, ModelPreset, Movement, Order, OrderPart, Part, Payment, SpecHistory, StatusHistory, User, Work, now
 
@@ -21,6 +21,8 @@ SPEC_LABELS = {
     "power": "Потужність", "ports": "Роз’єми", "condition": "Стан компонента",
 }
 ACTIVE = STAGES[:5]
+# Пристрій ще в сервісі: активна заявка або скасована, доки пристрій не повернуто клієнту.
+OPEN = ACTIVE + ("cancelled",)
 DRAFT = STAGES[:2]
 CLOSED = ("completed", "returned")  # пристрій уже в клієнта: заявку більше не змінюють
 # Допустимі переходи між етапами заявки (діаграма станів у записці).
@@ -35,6 +37,17 @@ ALLOWED = {
     # скасований пристрій лишається в сервісі, доки його не віддадуть клієнту
     "cancelled": {"returned"},
 }
+
+def still_open():
+    """Умова SQL «пристрій ще в сервісі». Скасована онлайн-заявка, пристрій якої так і не надійшов, уже закрита."""
+    return and_(Order.status.in_(OPEN), or_(Order.status != "cancelled", Order.device_received_at.is_not(None)))
+
+def amount_due(order):
+    """Скільки клієнт має сплатити загалом. Діагностика безкоштовна: якщо ремонт не починали, скасування нічого не коштує.
+    Після початку ремонту при скасуванні клієнт платить за виконане, але не більше погодженої суми."""
+    if order.status in ("cancelled", "returned"):
+        return min(order.total_cost, order.approved_total) if repair_started(order) else Decimal(0)
+    return order.total_cost
 
 def repair_started(order):
     """Клієнт хоч раз погодив кошторис: роботи почалися, деталі вважаються встановленими."""
@@ -52,7 +65,7 @@ def row(record, *exclude):
 
 def public_user(user):
     return dict(row(user, "password_hash", "telegram_chat_id", "telegram_link_code", "telegram_link_expires_at",
-                    "claim_token_hash", "claim_expires_at", "token_version"),
+                    "claim_token_hash", "claim_expires_at", "token_version", "reset_token_hash", "reset_expires_at"),
                 telegram_linked=user.telegram_chat_id is not None, is_guest=user.email is None)
 
 def access_device(db, device_id, user, lock=False):
@@ -64,15 +77,20 @@ def access_device(db, device_id, user, lock=False):
         fail(404, "Паспорт пристрою не знайдено.")
     return device
 
-def access_order(db, order_id, user, write=False):
+def access_order(db, order_id, user, write=False, take=False):
+    """write — змінювати заявку може лише її майстер (і адміністратор).
+    take — виняток для вільної заявки: майстер лише закріплює її за собою."""
     query = select(Order).where(Order.id == order_id)
     if write:
         query = query.with_for_update()
     order = db.scalar(query)
     if not order or (user.role == "client" and order.client_id != user.id):
         fail(404, "Заявку не знайдено.")
-    if write and user.role == "master" and order.master_id not in (None, user.id):
-        fail(403, "Заявка закріплена за іншим майстром.")
+    if write and user.role == "master" and order.master_id != user.id:
+        if order.master_id is not None:
+            fail(403, "Заявка закріплена за іншим майстром.")
+        if not take:
+            fail(403, "Спершу візьміть заявку: працювати з нею може лише відповідальний майстер.")
     return order
 
 def preload(db, orders):
@@ -156,6 +174,17 @@ def change_spec(db, device, field, value, user_id, reason, order_id=None):
     db.add(SpecHistory(device_id=device.id, order_id=order_id, changed_by_id=user_id, field_name=field,
                        old_value=old, new_value=value, change_reason=reason))
 
+IDENTITY_FIELDS = ("serial_number", "device_category", "brand", "model")
+
+def change_identity(db, device, field, value, user_id, reason):
+    """Зміна даних, за якими впізнають пристрій (серійний номер, модель): зберігається в журналі паспорта."""
+    old = getattr(device, field)
+    if old == value:
+        return
+    setattr(device, field, value)
+    db.add(SpecHistory(device_id=device.id, changed_by_id=user_id, field_name=field,
+                       old_value=old or "", new_value=value or "", change_reason=reason))
+
 def stage_started(db, order_ids=None):
     """Час останньої зміни етапу для кожної заявки: {order_id: datetime}."""
     query = select(StatusHistory.order_id, func.max(StatusHistory.changed_at)).group_by(StatusHistory.order_id)
@@ -169,7 +198,7 @@ def order_summary(db, order, stage_since=None):
     master = db.get(User, order.master_id) if order.master_id else None
     if stage_since is None:
         stage_since = stage_started(db, [order.id]).get(order.id, order.created_at)
-    return dict(row(order, "internal_notes", "approval_comment"), device=f"{device.brand} {device.model}",
+    return dict(row(order, "internal_notes", "approval_comment"), amount_due=amount_due(order), device=f"{device.brand} {device.model}",
                 serial_number=device.serial_number, category=device.device_category, client=client.full_name,
                 master=master.full_name if master else None, stage_since=stage_since)
 
@@ -205,11 +234,25 @@ def estimate_version(db, order):
     )
     return sha256(repr(signature).encode()).hexdigest()
 
+def estimate_items(db, order):
+    """Відбиток складу кошторису: які роботи й запчастини, скільки й за якою ціною.
+    Висновок діагностики не входить: майстер може дописати його під час ремонту без нової згоди."""
+    signature = (
+        bool(order.is_warranty_case),
+        sorted((item.work_name, str(item.price)) for item in works(db, order)),
+        sorted((item.part_id, item.quantity, str(item.unit_sale_price)) for item in parts(db, order)),
+    )
+    return sha256(repr(signature).encode()).hexdigest()
+
 def refresh_totals(db, order):
+    # база перевіряє, що сума заявки дорівнює роботам і запчастинам (або 0 для гарантійного ремонту):
+    # спершу узгоджуємо суму з поточними підсумками (наприклад, після зміни ознаки гарантії), потім перераховуємо
+    order.total_cost = order_total(order.works_total or 0, order.parts_total or 0, order.is_warranty_case)
     db.flush()
-    order.works_total = sum(item.price for item in works(db, order))
-    order.parts_total = sum(item.total_sale_price for item in parts(db, order))
-    order.total_cost = order_total(order.works_total, order.parts_total, order.is_warranty_case)
+    works_total = sum((item.price for item in works(db, order)), Decimal(0))
+    parts_total = sum((item.total_sale_price for item in parts(db, order)), Decimal(0))
+    order.works_total, order.parts_total = works_total, parts_total
+    order.total_cost = order_total(works_total, parts_total, order.is_warranty_case)
     order.updated_at = now()
 
 def ensure_draft(order):
@@ -221,10 +264,16 @@ def ensure_estimate_editable(order):
     if order.status not in DRAFT + ("in_repair",):
         fail(409, "Змінювати кошторис можна під час діагностики або ремонту, але не поки клієнт ухвалює рішення.")
 
-def recheck_approval(order):
-    """Під час ремонту доплату понад погоджену суму знову погоджує клієнт; зменшення суми згоди не потребує."""
-    if order.status == "in_repair" and order.approved_total is not None:
-        order.client_approval_status = "approved" if order.total_cost <= order.approved_total else "pending"
+def recheck_approval(db, order):
+    """Під час ремонту будь-яку зміну погодженого складу кошторису знову погоджує клієнт.
+    Якщо майстер повернув позиції до погодженого вигляду, попередня згода знову чинна."""
+    if order.status != "in_repair" or order.approved_total is None:
+        return
+    if order.approved_items:
+        unchanged = estimate_items(db, order) == order.approved_items
+    else:  # заявки, погоджені до появи відбитка складу: як раніше, за сумою
+        unchanged = order.total_cost <= order.approved_total
+    order.client_approval_status = "approved" if unchanged else "pending"
 
 def stock_move(db, part, amount, user_id, reason, order_id=None):
     new_stock = part.quantity_in_stock + amount
@@ -263,6 +312,7 @@ def decide_estimate(db, order, user, approved, comment=""):
     if approved:
         order.approved_at = now()
         order.approved_total = order.total_cost
+        order.approved_items = estimate_items(db, order)
     # Відмова від доплати не скасовує раніше погоджену суму: ремонт можна продовжити в тому обсязі.
     order.approval_comment = comment
     emit(db, "decision", order.id)
@@ -278,12 +328,16 @@ def transition(db, order, target, user, comment):
     current = order.status
     if target not in ALLOWED.get(current, set()):
         fail(409, "Цей перехід між етапами недоступний.")
+    if target == "diagnostics" and current == "registered" and not order.device_received_at:
+        fail(409, "Пристрій ще не надійшов до центру. Позначте «Пристрій отримано», коли клієнт його принесе або надішле.")
     if target == "diagnostics" and current == "registered" and not order.master_id:
         fail(409, "Спершу призначте відповідального майстра.")
     if target == "diagnostics" and current == "registered" and not access_device(db, order.device_id, user).serial_number:
         fail(409, "Перед діагностикою внесіть серійний номер пристрою.")
     if target == "cancelled" and repair_started(order) and not comment:
         fail(422, "Зазначте причину скасування ремонту.")
+    if target == "cancelled" and not order.device_received_at:
+        order.completed_at = now()  # пристрій не надходив до центру: повертати нічого, заявку закрито
     if target == "diagnostics" and current == "waiting_approval":
         if order.client_approval_status == "approved":
             fail(409, "Погоджений кошторис зафіксовано.")
@@ -297,7 +351,7 @@ def transition(db, order, target, user, comment):
         if not works(db, order) and not parts(db, order):
             fail(409, "Кошторис порожній: додайте роботи або запчастини.")
         if current == "in_repair" and order.client_approval_status != "pending":
-            fail(409, "Погоджувати нічого: сума кошторису не перевищує погоджену клієнтом.")
+            fail(409, "Погоджувати нічого: кошторис не змінювався після згоди клієнта.")
     if target == "in_repair" and order.client_approval_status != "approved":
         # Клієнт відмовився від доплати — ремонт продовжують у погодженому раніше обсязі.
         if not (order.client_approval_status == "rejected" and repair_started(order)):
@@ -308,8 +362,12 @@ def transition(db, order, target, user, comment):
         for item in sorted(parts(db, order), key=lambda item: item.part_id):
             stock_move(db, lock_part(db, item.part_id), item.quantity, user.id, "Повернення після скасування", order.id)
     if target == "returned":
+        if not order.device_received_at:
+            fail(409, "Пристрій не надходив до центру, тому повертати нічого: заявку вже закрито.")
         if current == "ready_for_pickup" and not comment:
             fail(422, "Зазначте, чому пристрій повертається без звичайної видачі.")
+        if current == "cancelled" and order.paid_amount < amount_due(order) and not comment:
+            fail(422, "Клієнт не сплатив за виконані роботи. Прийміть оплату або зазначте, чому пристрій повертається без неї.")
         if order.delivery_method == "nova_poshta" and not order.delivery_ttn:
             fail(409, "Клієнт обрав Нову Пошту: спершу внесіть номер накладної для повернення.")
         order.completed_at = now()  # дата закриття заявки; гарантії немає, бо ремонт не видано звичайним способом
@@ -354,21 +412,33 @@ def next_order_number(db):
                      .where(Order.order_number.like(prefix + "%")))
     return f"{prefix}{(last or 0) + 1:04d}"
 
-def ensure_no_open_order(db, device):
-    """Один пристрій — одна відкрита заявка: друге звернення додають до наявної або чекають її завершення."""
+# Відповідь публічній формі, коли заявку не можна створити: однакова для всіх причин, без номерів чужих заявок.
+PUBLIC_REFUSAL = "Не вдалося оформити заявку онлайн. Зателефонуйте до сервісного центру, і працівник оформить звернення."
+
+def ensure_no_open_order(db, device, public=False):
+    """Один пристрій — одна відкрита заявка: друге звернення додають до наявної або чекають її завершення.
+    Скасована заявка теж відкрита, поки пристрій не повернуто клієнту."""
     db.execute(select(Device.id).where(Device.id == device.id).with_for_update())  # одночасні заявки на той самий пристрій
-    number = db.scalar(select(Order.order_number).where(Order.device_id == device.id, Order.status.in_(ACTIVE)).limit(1))
-    if number:
+    found = db.execute(select(Order.order_number, Order.status)
+                       .where(Order.device_id == device.id, still_open()).limit(1)).first()
+    if found:
+        if public:
+            fail(409, PUBLIC_REFUSAL)
+        number, status = found
+        if status == "cancelled":
+            fail(409, f"Пристрій ще в сервісі за скасованою заявкою {number}. Спершу позначте його повернутим клієнту.")
         fail(409, f"На цей пристрій уже є відкрита заявка {number}. Доповніть її або дочекайтеся завершення.")
 
-def new_order(db, user, device, fields):
-    ensure_no_open_order(db, device)
+def new_order(db, user, device, fields, public=False):
+    ensure_no_open_order(db, device, public)
     fields = dict(fields)
     delivery = fields.pop("delivery", None) or {}
     fields.update(apply_delivery(delivery))
     order = Order(device_id=device.id, client_id=device.owner_id, order_number=next_order_number(db), **fields)
     db.add(order)
     db.flush()
+    if user.role == "client":  # онлайн-заявка: пристрій ще в клієнта або в дорозі
+        order.device_received_at = None
     db.add(StatusHistory(order_id=order.id, changed_by_id=user.id, new_status="registered",
                          changed_at=order.created_at))
     from .notifications import emit

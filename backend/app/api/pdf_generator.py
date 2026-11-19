@@ -65,7 +65,8 @@ def generate_pdf(db, order, certificate):
                                    ("VALIGN", (0,0), (-1,-1), "TOP")]))
         if order.is_warranty_case:
             story.append(p("Гарантійний випадок: роботи та запчастини надано без оплати клієнтом."))
-        story.extend([table, Spacer(1, 10), p(f"Погоджена сума: {format_money(order.approved_total if order.approved_total is not None else order.total_cost)}"),
+        # Фактична сума за переліченими позиціями (для гарантійного випадку — 0), а не сума першого погодження.
+        story.extend([table, Spacer(1, 10), p(f"Вартість ремонту до сплати: {format_money(order.total_cost)}"),
                       p(f"Облікована оплата: {format_money(order.paid_amount)}")])
         if order.completed_at:
             story.append(p(f"Дата завершення: {date_label(order.completed_at)}"))
@@ -136,6 +137,8 @@ def pdf(order_id: int, kind: str, db: Db, user: Current):
     if kind not in ("receipt", "warranty"):
         fail(404, "Документ не знайдено.")
     certificate = kind == "warranty"
+    if not certificate and not order.device_received_at:
+        fail(409, "Квитанція стане доступною після того, як пристрій надійде до центру.")
     if certificate and order.status not in ("ready_for_pickup", "completed"):
         fail(409, "Гарантійний талон стане доступним після ремонту.")
     return Response(generate_pdf(db, order, certificate), media_type="application/pdf",

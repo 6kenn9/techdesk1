@@ -86,10 +86,10 @@ def status_text(db, order, title):
     status = order.status
     buttons = None
     if status == "waiting_approval":
-        extra = order.approved_total is not None  # кошторис доповнили під час ремонту
-        lines = ["💰 Потрібна згода на доплату" if extra else "💰 Кошторис готовий", title, ""]
+        extra = order.approved_total is not None  # кошторис змінили під час ремонту
+        lines = ["💰 Кошторис змінено — потрібна ваша згода" if extra else "💰 Кошторис готовий", title, ""]
         if extra:
-            lines.append(f"Під час ремонту виявлено ще несправність. Раніше погоджено: {money(order.approved_total)}.")
+            lines.append(f"Під час ремонту перелік робіт або запчастин змінився. Раніше погоджено: {money(order.approved_total)}.")
         if order.diagnostics:
             lines.append(f"Діагностика: {order.diagnostics}")
         lines += [f"Роботи: {money(order.works_total)}", f"Запчастини: {money(order.parts_total)}",
@@ -120,6 +120,11 @@ def status_text(db, order, title):
     elif status == "cancelled":
         how = "Відправимо пристрій Новою Поштою й надішлемо номер накладної." if order.delivery_method == "nova_poshta" \
             else "Заберіть пристрій у сервісному центрі, назвавши номер заявки."
+        due = domain.amount_due(order) - order.paid_amount
+        if not order.device_received_at:
+            how = "Пристрій до центру не надходив, тож нічого робити не потрібно."
+        elif due > 0:
+            how = f"До сплати за вже виконані роботи: {money(due)}. {how}"
         text = f"Заявку скасовано\n{title}\n{how}"
     elif status == "returned":
         text = f"↩️ Пристрій повернуто вам\n{title}\nЗаявку закрито."

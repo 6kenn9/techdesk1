@@ -9,3 +9,4 @@ dist/
 backups/
 telegramtoken.env.txt
 *.env.txt
+_to_delete/

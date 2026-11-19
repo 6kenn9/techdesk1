@@ -19,11 +19,16 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://techdesk:${POSTGRES_PASSWORD:-techdesk}@db:5432/techdesk
       JWT_SECRET: ${JWT_SECRET:-}
-      DEMO_MODE: ${DEMO_MODE:-true}
+      DEMO_MODE: ${DEMO_MODE:-false}
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:5173}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
     depends_on:
       db:
         condition: service_healthy

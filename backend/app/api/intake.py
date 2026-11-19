@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from ..core.security import Current, Db, RateLimiter, Staff, client_ip, fail, hasher, throttle, token
 from ..models.models import Device, ModelPreset, User, now
 from ..schemas.schemas import Claim, CompleteRegistration, Intake, QuickRequest, SerialInput
-from ..services.domain import access_device, add_preset, new_order, order_details, public_user, warranty
+from ..services.domain import PUBLIC_REFUSAL, access_device, change_identity, add_preset, new_order, order_details, public_user, warranty
 from .orders import validate_master
 
 router = APIRouter(prefix="/api")
@@ -24,12 +24,12 @@ def issue_claim(user):
     user.claim_expires_at = now() + timedelta(days=CLAIM_DAYS)
     return raw
 
-def find_or_create_client(db, phone, full_name):
+def find_or_create_client(db, phone, full_name, public=False):
     """Повертає (клієнт, claim-токен). Токен видається лише для щойно створеного гостьового кабінету."""
     client = db.scalar(select(User).where(User.phone == phone).with_for_update())
     if client:
         if client.role != "client" or not client.is_active:
-            fail(409, "Цей телефон не можна використати для заявки клієнта.")
+            fail(409, PUBLIC_REFUSAL if public else "Цей телефон не можна використати для заявки клієнта.")
         return client, None
     client = User(full_name=(full_name or "Клієнт").strip(), email=None, phone=phone, role="client",
                   password_hash=hasher.hash(secrets.token_urlsafe(32)))
@@ -48,13 +48,14 @@ def with_preset_specs(db, data):
             data["specifications"] = dict(preset.default_specs)
     return data
 
-def register_device(db, owner, data):
+def register_device(db, owner, data, public=False):
+    """public — публічна форма: відповідь не має розкривати, що такий серійний номер уже є в базі."""
     data = with_preset_specs(db, dict(data))
     if data.get("serial_number"):
         existing = db.scalar(select(Device).where(Device.serial_number == data["serial_number"]))
         if existing:
             if existing.owner_id != owner.id:
-                fail(409, "Пристрій із таким серійним номером уже є в системі. Зверніться до працівника центру.")
+                fail(409, PUBLIC_REFUSAL if public else "Пристрій із таким серійним номером уже є в системі. Зверніться до працівника центру.")
             return existing
     device = Device(owner_id=owner.id, **data)
     db.add(device)
@@ -95,10 +96,10 @@ def spec_suggestion(db: Db, user: Staff, category: str = Query(max_length=40), b
 def quick_request(payload: QuickRequest, db: Db):
     if payload.website:  # поле-приманка заповнив бот: вдаємо успіх, нічого не зберігаючи
         return {"order_number": "—", "claim_token": None, "account_exists": False}
-    client, claim = find_or_create_client(db, payload.phone, payload.full_name)
-    device = register_device(db, client, payload.device.model_dump())
+    client, claim = find_or_create_client(db, payload.phone, payload.full_name, public=True)
+    device = register_device(db, client, payload.device.model_dump(), public=True)
     order = new_order(db, client, device, {"problem_description": payload.problem_description,
-                                             "delivery": payload.delivery.model_dump() if payload.delivery else None})
+                                             "delivery": payload.delivery.model_dump() if payload.delivery else None}, public=True)
     db.commit()
     return {"order_number": order.order_number, "order_id": order.id, "claim_token": claim,
             "account_exists": claim is None, "claim_days": CLAIM_DAYS}
@@ -170,6 +171,6 @@ def set_serial(device_id: int, payload: SerialInput, db: Db, user: Staff):
     other = db.scalar(select(Device.id).where(Device.serial_number == payload.serial_number, Device.id != device.id))
     if other:
         fail(409, "Цей серійний номер уже закріплено за іншим пристроєм.")
-    device.serial_number = payload.serial_number
+    change_identity(db, device, "serial_number", payload.serial_number, user.id, "Внесення серійного номера")
     db.commit()
     return {"id": device.id, "serial_number": device.serial_number}

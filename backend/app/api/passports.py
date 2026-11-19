@@ -4,7 +4,7 @@ from sqlalchemy import or_, select
 from ..core.security import Admin, Current, Db, Staff, fail
 from ..models.models import Device, DevicePhoto, ModelPreset, Order, SpecHistory, User
 from ..schemas.schemas import Defect, DeviceCreate, Hardware, OwnerTransfer, PresetCreate, Upgrade
-from ..services.domain import ACTIVE, access_device, access_order, add_preset, change_spec, passport, row, warranties
+from ..services.domain import IDENTITY_FIELDS, access_device, still_open, access_order, add_preset, change_identity, change_spec, passport, row, warranties
 
 def visible_to(query, user):
     """Клієнт бачить фото пристрою без заявки та фото власних заявок, але не заявок попереднього власника."""
@@ -80,7 +80,10 @@ def update_passport(device_id: int, payload: Hardware, db: Db, user: Staff):
     for key in set(device.specifications) | set(payload.specifications):
         change_spec(db, device, key, payload.specifications.get(key, ""), user.id, "Редагування паспорта")
     for key, value in payload.model_dump(exclude={"specifications"}).items():
-        setattr(device, key, value)
+        if key in IDENTITY_FIELDS:
+            change_identity(db, device, key, value, user.id, "Редагування паспорта")
+        else:
+            setattr(device, key, value)
     db.commit()
     return passport(db, device, user, True)
 
@@ -106,8 +109,8 @@ def transfer(device_id: int, payload: OwnerTransfer, db: Db, user: Admin):
         fail(422, "Оберіть активного клієнта.")
     if owner.id == device.owner_id:
         fail(409, "Пристрій уже належить цьому клієнту.")
-    if db.scalar(select(Order.order_number).where(Order.device_id == device.id, Order.status.in_(ACTIVE)).limit(1)):
-        fail(409, "Спершу завершіть або скасуйте відкриту заявку на цей пристрій.")
+    if db.scalar(select(Order.order_number).where(Order.device_id == device.id, still_open()).limit(1)):
+        fail(409, "Пристрій ще в сервісі: спершу завершіть заявку або позначте пристрій повернутим клієнту.")
     previous = db.get(User, device.owner_id)
     db.add(SpecHistory(device_id=device.id, changed_by_id=user.id, field_name="owner", old_value=previous.full_name,
                        new_value=owner.full_name, change_reason=payload.reason or "Зміна власника пристрою"))

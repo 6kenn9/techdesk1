@@ -201,6 +201,7 @@ async function submit() {
               required
             />
           </label>
+          <RouterLink v-if="!register" to="/reset" style="justify-self: end; align-self: flex-end; margin-top: -8px; font-size: .86rem">Забули пароль?</RouterLink>
           <p v-if="error" class="error" role="alert">{{ error }}</p>
           <button class="button primary wide" :disabled="busy">
             {{ register ? "Зареєструватися" : "Увійти" }}

@@ -60,7 +60,7 @@ function hint(text) {
         required
         maxlength="180"
         autocomplete="off"
-        placeholder="Наприклад, Lenovo IdeaPad 3"
+        :placeholder="form.device_category === 'Інше' ? 'Що це за пристрій, наприклад принтер HP LaserJet 1020' : 'Наприклад, Lenovo IdeaPad 3'"
         @input="typed"
         @focus="open = suggestions.length > 0"
         @blur="closeLater"

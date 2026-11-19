@@ -1,0 +1,50 @@
+# Розгортання TechDesk на Render (Blueprint): база даних, сервер API і сайт.
+# Render → New → Blueprint → обрати цей репозиторій. Назви сервісів визначають адреси *.onrender.com:
+# якщо назву зайнято, Render додасть до адреси суфікс — тоді виправте PUBLIC_URL і правило /api/* нижче.
+databases:
+  - name: techdesk-db
+    plan: free
+    databaseName: techdesk
+    user: techdesk
+
+services:
+  - type: web
+    name: techdesk-api
+    runtime: docker
+    plan: free
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: techdesk-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DEMO_MODE
+        value: "true"
+      - key: PUBLIC_URL
+        value: https://techdesk.onrender.com
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        sync: false
+
+  - type: web
+    name: techdesk
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    routes:
+      # запити до API йдуть на сервер, тож сайт і API мають одну адресу (як nginx у docker-compose)
+      - type: rewrite
+        source: /api/*
+        destination: https://techdesk-api.onrender.com/api/*
+      # односторінковий застосунок: будь-яка сторінка відкриває index.html
+      - type: rewrite
+        source: /*
+        destination: /index.html

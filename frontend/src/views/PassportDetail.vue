@@ -12,6 +12,8 @@ import Warranty from '../components/Warranty.vue'
 import PhotoGallery from '../components/PhotoGallery.vue'
 
 const id = useRoute().params.id
+// Журнал паспорта містить і зміни даних, за якими впізнають пристрій.
+const historyLabels = { owner: 'Власник', serial_number: 'Серійний номер', device_category: 'Категорія', brand: 'Виробник', model: 'Модель' }
 const session = useSession()
 const item = ref(null),
   error = ref(''),
@@ -218,7 +220,7 @@ async function copy() {
         </div>
         <ul v-if="item.spec_history.length" class="log">
           <li v-for="entry in item.spec_history" :key="entry.id">
-            <strong>{{ entry.field_name === 'owner' ? 'Власник' : specLabels[entry.field_name] || entry.field_name }}</strong>
+            <strong>{{ historyLabels[entry.field_name] || specLabels[entry.field_name] || entry.field_name }}</strong>
             · {{ entry.old_value || '—' }} → {{ entry.new_value || '—' }}
             <small>{{ dateTime(entry.changed_at) }} · {{ entry.technician }} {{ entry.order_number || '' }}</small>
             <p>{{ entry.change_reason }}</p>

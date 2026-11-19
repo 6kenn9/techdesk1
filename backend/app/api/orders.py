@@ -9,7 +9,7 @@ from decimal import Decimal
 from fastapi import Response
 from ..models.models import Device, Order, OrderPart, Payment, Service, StatusHistory, User, Work, now
 from ..schemas.schemas import Approval, ClientCancel, Delivery, RatingInput, Shipment, OrderCreate, OrderEdit, OrderPartInput, PaymentInput, Quantity, Transition, WorkInput
-from ..services.domain import (ACTIVE, apply_delivery, stage_started, access_device, access_order, add_part, decide_estimate, ensure_draft, ensure_estimate_editable, estimate_version,
+from ..services.domain import (ACTIVE, amount_due, apply_delivery, stage_started, access_device, access_order, add_part, decide_estimate, ensure_draft, ensure_estimate_editable, estimate_version,
                                CLOSED, LABELS, local_date, lock_part, new_order, order_details, order_summary, preload, recheck_approval, refresh_totals,
                                repair_started, stock_move, transition, warranty)
 from ..services.notifications import emit
@@ -132,11 +132,25 @@ def create_order(payload: OrderCreate, db: Db, user: Current):
     if (payload.is_warranty_case or payload.warranty_claim) and not active_warranty:
         fail(422, "На пристрій немає чинної гарантії.")
     fields = payload.model_dump(exclude={"device_id", "new_device"})
-    if user.role != "client":
+    if user.role == "client":
+        fields["priority"] = "normal"  # терміновість визначає працівник центру, а не клієнт
+    else:
         fields["warranty_claim"] = False  # працівник одразу вирішує сам через «Гарантійний випадок»
     order = new_order(db, user, device, fields)
     db.commit()
     return dict(order_details(db, order, user), active_warranty=active_warranty)
+
+@router.post("/{order_id}/receive")
+def receive_device(order_id: int, db: Db, user: Staff):
+    """Онлайн-заявка: працівник позначає, що клієнт приніс пристрій або його доставила пошта."""
+    order = access_order(db, order_id, user, write=True, take=True)
+    if order.device_received_at:
+        fail(409, "Пристрій уже отримано.")
+    if order.status != "registered":
+        fail(409, "Позначити отримання можна лише для щойно оформленої заявки.")
+    order.device_received_at = now()
+    db.commit()
+    return order_details(db, order, user)
 
 @router.get("/{order_id}")
 def detail(order_id: int, db: Db, user: Current):
@@ -144,18 +158,22 @@ def detail(order_id: int, db: Db, user: Current):
 
 @router.put("/{order_id}")
 def edit(order_id: int, payload: OrderEdit, db: Db, user: Staff):
-    order = access_order(db, order_id, user, write=True)
     fields = payload.model_dump(exclude_unset=True)
+    # Вільну заявку майстер може лише взяти собі; решту змін робить її відповідальний майстер.
+    order = access_order(db, order_id, user, write=True, take=fields.get("master_id") == user.id and set(fields) == {"master_id"})
     if "master_id" in fields:
-        if order.status not in ACTIVE:
+        # скасовану заявку теж можна взяти: пристрій ще треба повернути клієнту
+        if order.status not in ACTIVE and not (order.status == "cancelled" and order.device_received_at):
             fail(409, "Заявку вже закрито.")
         if user.role != "admin" and (order.master_id is not None or fields["master_id"] != user.id):
             fail(403, "Ви можете взяти лише вільну заявку.")
+        if fields["master_id"] is None and order.status != "registered":
+            fail(409, "Після початку діагностики заявку можна лише передати іншому майстру.")
         validate_master(db, fields["master_id"])
     if "diagnostics" in fields:
         ensure_estimate_editable(order)  # під час ремонту майстер дописує нову знахідку
     if "paid_amount" in fields:
-        if order.status != "ready_for_pickup" or fields["paid_amount"] is None or fields["paid_amount"] > order.total_cost:
+        if not payable(order) or fields["paid_amount"] is None or fields["paid_amount"] > amount_due(order):
             fail(422, "Оплату приймають, коли пристрій готовий до видачі, у межах суми замовлення.")
         if fields["paid_amount"] < order.paid_amount:
             fail(422, "Облікову оплату не можна зменшити: кожна оплата зберігається окремим записом.")
@@ -222,7 +240,7 @@ def saved(db, order, user, works_changed=False):
     refresh_totals(db, order)
     if works_changed:
         sync_warranty(db, order)
-    recheck_approval(order)  # під час ремонту доплата понад погоджену суму знову чекає згоди клієнта
+    recheck_approval(db, order)  # під час ремонту будь-яка зміна погодженого кошторису знову чекає згоди клієнта
     db.commit()
     return order_details(db, order, user)
 
@@ -286,15 +304,19 @@ def delete_order_part(order_id: int, line_id: int, db: Db, user: Staff):
     db.delete(item)
     return saved(db, order, user)
 
+def payable(order):
+    """Оплату приймають за готовий ремонт або за виконані роботи скасованого ремонту, поки пристрій у сервісі."""
+    return order.status == "ready_for_pickup" or (order.status == "cancelled" and amount_due(order) > 0)
+
 PAYMENT_METHODS = {"cash": "готівка", "card": "картка", "transfer": "переказ"}
 
 @router.post("/{order_id}/payments", status_code=201)
 def add_payment(order_id: int, payload: PaymentInput, db: Db, user: Staff):
     """Окрема оплата: частину можна прийняти готівкою, решту карткою чи переказом."""
     order = access_order(db, order_id, user, write=True)
-    if order.status != "ready_for_pickup":
-        fail(409, "Оплату приймають, коли пристрій готовий до видачі.")
-    due = order.total_cost - order.paid_amount
+    if not payable(order):
+        fail(409, "Оплату приймають, коли пристрій готовий до видачі, або за виконані роботи скасованого ремонту.")
+    due = amount_due(order) - order.paid_amount
     if payload.amount > due:
         fail(422, f"Сума перевищує залишок до сплати ({due} грн).")
     db.add(Payment(order_id=order.id, amount=payload.amount, method=payload.method, note=payload.note, created_by_id=user.id))
@@ -324,7 +346,7 @@ def change_delivery(order_id: int, payload: Delivery, db: Db, user: Current):
     """Клієнт або працівник змінює спосіб повернення пристрою, доки його не відправлено."""
     order = access_order(db, order_id, user, write=True)
     # Для скасованої заявки спосіб ще можна змінити: пристрій повертають клієнту самовивозом або Новою Поштою.
-    if order.status in CLOSED or order.delivery_ttn:
+    if order.status in CLOSED or order.delivery_ttn or not order.device_received_at and order.status == "cancelled":
         fail(409, "Спосіб отримання вже не можна змінити.")
     for key, value in apply_delivery(payload.model_dump()).items():
         setattr(order, key, value)
@@ -343,7 +365,9 @@ def ship(order_id: int, payload: Shipment, db: Db, user: Staff):
         fail(409, "Клієнт обрав самовивіз.")
     if order.status not in ("ready_for_pickup", "cancelled"):
         fail(409, "Відправити можна відремонтований пристрій або повернути пристрій після скасування.")
-    if order.status == "ready_for_pickup" and order.paid_amount < order.total_cost:
+    if order.status == "cancelled" and not order.device_received_at:
+        fail(409, "Пристрій не надходив до центру, тому відправляти нічого.")
+    if order.paid_amount < amount_due(order):
         fail(409, "Перед відправкою облікуйте повну оплату замовлення.")
     if payload.ttn == order.delivery_ttn:  # повторне збереження того самого номера — без зайвого сповіщення клієнту
         return order_details(db, order, user)

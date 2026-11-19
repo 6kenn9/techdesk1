@@ -5,18 +5,29 @@ from sqlalchemy import func, select
 from ..core.config import DEMO_MODE, GOOGLE_CLIENT_ID
 from ..core.security import Admin, Current, Db, RateLimiter, Staff, client_ip, fail, hasher, throttle, token, verify
 from ..models.models import Order, User, now
-from ..schemas.schemas import GoogleLogin, Login, PasswordChange, Registration, StaffRegistration, TelegramNotifications, UserEdit
+from ..schemas.schemas import ForgotPassword, GoogleLogin, Login, ResetPassword, PasswordChange, Registration, StaffRegistration, TelegramNotifications, UserEdit
 from ..services.domain import ACTIVE, public_user
 
 router = APIRouter(prefix="/api")
 login_failures = RateLimiter(limit=5, window=300)
 registrations = RateLimiter(limit=10, window=3600)
 password_changes = RateLimiter(limit=10, window=900)
+forgot_requests = RateLimiter(limit=5, window=3600)
+RESET_MINUTES = 30
+
+GUEST_PHONE = ("Для цього телефону вже є кабінет, створений під час заявки без реєстрації. Відкрийте його за особистим "
+               "посиланням і додайте там пошту й пароль. Якщо посилання загубилося, зверніться до сервісного центру — видамо нове.")
+
+def ensure_phone_free(db, phone, taken="Цей телефон уже зареєстровано."):
+    owner = db.scalar(select(User).where(User.phone == phone))
+    if owner:
+        fail(409, GUEST_PHONE if owner.role == "client" and owner.email is None else taken)
 
 def create_account(db, payload, role="client", specialization=""):
     email = payload.email.lower()
-    if db.scalar(select(User.id).where((User.email == email) | (User.phone == payload.phone))):
+    if db.scalar(select(User.id).where(User.email == email)):
         fail(409, "Ця електронна пошта або телефон уже зареєстровані.")
+    ensure_phone_free(db, payload.phone, "Ця електронна пошта або телефон уже зареєстровані.")
     user = User(full_name=payload.full_name, email=email, phone=payload.phone,
                 role=role, specialization=specialization, password_hash=hasher.hash(payload.password))
     db.add(user)
@@ -46,6 +57,13 @@ def login(payload: Login, db: Db, request: Request):
     login_failures.reset(key)
     return {"access_token": token(user), "user": public_user(user)}
 
+# Скинути пароль і прив'язати кабінет до Google без пароля можна лише для адрес Gmail: їх Google ніколи
+# не видає іншій людині. Робочу чи шкільну адресу на власному домені після звільнення можуть віддати іншому.
+GOOGLE_OWN_DOMAINS = ("gmail.com", "googlemail.com")
+
+def resettable(email):
+    return email.rsplit("@", 1)[-1] in GOOGLE_OWN_DOMAINS
+
 @router.post("/auth/google")
 def google_login(payload: GoogleLogin, db: Db, request: Request):
     """Вхід через Google. Відомий e-mail — вхід в існуючий кабінет; новий — реєстрація клієнта,
@@ -69,7 +87,8 @@ def google_login(payload: GoogleLogin, db: Db, request: Request):
         if not user.google_linked:
             # Пошту під час реєстрації не підтверджують, тож кабінет на цю адресу міг створити хтось інший.
             # Тому Google не впускає в наявний кабінет автоматично: власник один раз підтверджує пароль.
-            if payload.reset_password and user.role == "client":
+            can_reset = user.role == "client" and resettable(email)
+            if payload.reset_password and can_reset:
                 # Google підтвердив, що пошта належить цій людині. Якщо кабінет на цю адресу раніше створив хтось
                 # інший, його пароль і сеанси після прив'язки більше не діють, тож власником лишається тільки вона.
                 user.password_hash = hasher.hash(secrets.token_urlsafe(32))
@@ -79,7 +98,7 @@ def google_login(payload: GoogleLogin, db: Db, request: Request):
                 db.commit()
                 return {"access_token": token(user), "user": public_user(user)}
             if not payload.password:
-                return {"needs_password": True, "email": email, "can_reset": user.role == "client"}
+                return {"needs_password": True, "email": email, "can_reset": can_reset}
             password_key = (client_ip(request), email)
             if login_failures.blocked(password_key):
                 fail(429, "Забагато невдалих спроб входу. Спробуйте через 5 хвилин.")
@@ -92,8 +111,7 @@ def google_login(payload: GoogleLogin, db: Db, request: Request):
     else:
         if not payload.phone:
             return {"needs_phone": True, "email": email, "full_name": claims.get("name") or email.split("@")[0]}
-        if db.scalar(select(User.id).where(User.phone == payload.phone)):
-            fail(409, "Цей телефон уже зареєстровано.")
+        ensure_phone_free(db, payload.phone)
         user = User(full_name=(claims.get("name") or email.split("@")[0])[:150], email=email, phone=payload.phone,
                     role="client", password_hash=hasher.hash(secrets.token_urlsafe(32)), google_linked=True)
         db.add(user)
@@ -174,10 +192,26 @@ def edit_user(user_id: int, payload: UserEdit, db: Db, user: Admin):
         fail(404, "Користувача не знайдено.")
     if user.id == target.id and not payload.is_active:
         fail(409, "Ви не можете вимкнути власний обліковий запис.")
+    if target.is_active and not payload.is_active:
+        # усі видані токени перестають діяти й не «оживуть» після повторного ввімкнення
+        target.token_version = (target.token_version or 0) + 1
+    released = []
+    if target.is_active and not payload.is_active and target.role == "master":
+        released = release_orders(db, target, user)
     target.is_active = payload.is_active
     target.specialization = payload.specialization
     db.commit()
-    return public_user(target)
+    return dict(public_user(target), released_orders=released)
+
+def release_orders(db, master, admin):
+    """Майстра вимкнено: його незавершені заявки стають вільними, щоб їх узяли інші майстри."""
+    from ..services.domain import still_open
+    from ..services.inbox import describe, notify_staff
+    orders = list(db.scalars(select(Order).where(Order.master_id == master.id, still_open()).with_for_update()))
+    for order in orders:
+        order.master_id = None
+        notify_staff(db, order, "new", f"Заявка звільнилася (майстра {master.full_name} вимкнено): {describe(db, order)}", admin.id)
+    return [order.order_number for order in orders]
 
 @router.post("/auth/password", dependencies=[throttle(password_changes, "password")])
 def change_password(payload: PasswordChange, db: Db, user: Current):
@@ -189,6 +223,38 @@ def change_password(payload: PasswordChange, db: Db, user: Current):
     if payload.new_password == payload.current_password:
         fail(422, "Новий пароль має відрізнятися від поточного.")
     user.password_hash = hasher.hash(payload.new_password)
+    user.token_version = (user.token_version or 0) + 1
+    user.must_change_password = False
+    db.commit()
+    return {"access_token": token(user), "user": public_user(user)}
+
+@router.post("/auth/forgot", dependencies=[throttle(forgot_requests, "forgot")])
+def forgot_password(payload: ForgotPassword, db: Db):
+    """Лист з одноразовим посиланням для нового пароля. Відповідь однакова для будь-якої пошти,
+    щоб сторонній не міг перевірити, чи зареєстрована адреса."""
+    from hashlib import sha256
+    from ..core.config import PUBLIC_URL
+    from ..services import mail
+    user = db.scalar(select(User).where(User.email == payload.email.lower()))
+    if user and user.is_active:
+        raw = secrets.token_urlsafe(32)
+        user.reset_token_hash = sha256(raw.encode()).hexdigest()
+        user.reset_expires_at = now() + timedelta(minutes=RESET_MINUTES)
+        db.commit()
+        mail.send(user.email, "TechDesk: відновлення пароля",
+                  f"Вітаємо, {user.full_name}!\n\nЩоб задати новий пароль, відкрийте посилання протягом {RESET_MINUTES} хвилин:\n"
+                  f"{PUBLIC_URL}/reset?token={raw}\n\nЯкщо ви не просили змінити пароль, просто проігноруйте цей лист.")
+    return {"message": "Якщо ця пошта зареєстрована, ми надіслали на неї лист із посиланням для нового пароля."}
+
+@router.post("/auth/reset", dependencies=[throttle(password_changes, "reset")])
+def reset_by_mail(payload: ResetPassword, db: Db):
+    """Новий пароль за посиланням з листа. Посилання одноразове; усі старі сеанси завершуються."""
+    from hashlib import sha256
+    user = db.scalar(select(User).where(User.reset_token_hash == sha256(payload.token.encode()).hexdigest()).with_for_update())
+    if not user or not user.reset_expires_at or user.reset_expires_at < now() or not user.is_active:
+        fail(400, "Посилання недійсне або застаріло. Запросіть новий лист.")
+    user.password_hash = hasher.hash(payload.new_password)
+    user.reset_token_hash = user.reset_expires_at = None
     user.token_version = (user.token_version or 0) + 1
     user.must_change_password = False
     db.commit()

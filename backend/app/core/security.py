@@ -30,16 +30,24 @@ def token(user):
     return jwt.encode({"sub": str(user.id), "ver": user.token_version or 0, "exp": now() + timedelta(hours=8)},
                       JWT_SECRET, algorithm="HS256")
 
-def get_current_user(db: Db, credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]):
+# З тимчасовим паролем від адміністратора доступні лише ці маршрути: дізнатися про себе й задати власний пароль.
+TEMPORARY_PASSWORD_PATHS = {"/api/auth/me", "/api/auth/password"}
+
+def get_current_user(db: Db, request: Request, credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]):
+    user = None
     if credentials:
         try:
             claims = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"], options={"require": ["sub", "exp"]})
-            user = db.get(User, int(claims["sub"]))
-            if user and user.is_active and claims.get("ver", 0) == (user.token_version or 0):
-                return user
+            found = db.get(User, int(claims["sub"]))
+            if found and found.is_active and claims.get("ver", 0) == (found.token_version or 0):
+                user = found
         except (jwt.InvalidTokenError, ValueError):
             pass
-    fail(401, "Увійдіть до облікового запису.")
+    if not user:
+        fail(401, "Увійдіть до облікового запису.")
+    if user.must_change_password and request.url.path not in TEMPORARY_PASSWORD_PATHS:
+        fail(403, "Спершу задайте власний пароль у профілі: тимчасовий пароль дає доступ лише до зміни пароля.")
+    return user
 
 Current = Annotated[User, Depends(get_current_user)]
 

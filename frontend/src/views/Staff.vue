@@ -88,9 +88,12 @@ async function save() {
   try {
     const id = selected.value?.id
     const path = (modal.value === 'user' ? '/users' : '/passports/presets') + (id ? '/' + id : '')
-    await api(path, { method: id ? (modal.value === 'user' ? 'PATCH' : 'PUT') : 'POST', data: form.value })
+    const saved = await api(path, { method: id ? (modal.value === 'user' ? 'PATCH' : 'PUT') : 'POST', data: form.value })
     modal.value = ''
-    session.notify('Зміни збережено.')
+    const released = saved?.released_orders || []
+    session.notify(released.length
+      ? `Зміни збережено. Заявки майстра стали вільними й чекають на інших майстрів: ${released.join(', ')}.`
+      : 'Зміни збережено.')
     await load()
   } catch (e) {
     session.notify(e.message, 'error')

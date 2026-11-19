@@ -9,7 +9,7 @@ Money = Annotated[Decimal, Field(ge=0, le=9999999, max_digits=9, decimal_places=
 Count = Annotated[int, Field(ge=0, le=100000)]
 Positive = Annotated[int, Field(gt=0, le=100000)]
 Specs = dict[Annotated[str, StringConstraints(min_length=1, max_length=80)], Annotated[str, StringConstraints(max_length=160)]]
-Category = Literal["Ноутбук", "ПК", "Моноблок", "Міні-ПК", "Смартфон", "Планшет", "Смарт-годинник", "Консоль", "Монітор", "ДБЖ"]
+Category = Literal["Ноутбук", "ПК", "Моноблок", "Міні-ПК", "Смартфон", "Планшет", "Смарт-годинник", "Консоль", "Монітор", "ДБЖ", "Інше"]
 Stage = Literal["registered", "diagnostics", "waiting_approval", "in_repair", "ready_for_pickup", "completed", "cancelled", "returned"]
 
 def normalize_phone(value):
@@ -40,6 +40,13 @@ class GoogleLogin(Input):
     # клієнт не знає пароля (кабінет створено через Google до появи прив'язки або пароль забуто):
     # кабінет переходить під Google, старий пароль і всі інші сеанси скасовуються
     reset_password: bool = False
+
+class ForgotPassword(Input):
+    email: EmailStr
+
+class ResetPassword(Input):
+    token: str = Field(min_length=20, max_length=200)
+    new_password: str = Field(min_length=8, max_length=128)
 
 class Registration(Login):
     full_name: str = Field(min_length=1, max_length=150)

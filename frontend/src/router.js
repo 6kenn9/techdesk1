@@ -13,6 +13,7 @@ import Staff from './views/Staff.vue'
 import Cabinet from './views/Cabinet.vue'
 import Quick from './views/Quick.vue'
 import Claim from './views/Claim.vue'
+import Reset from './views/Reset.vue'
 import Intake from './views/Intake.vue'
 
 export function makeRouter(pinia) {
@@ -26,6 +27,7 @@ export function makeRouter(pinia) {
       { path: '/quick', component: Quick },
       { path: '/claim/:token', component: Claim },
       { path: '/login', component: Auth },
+      { path: '/reset', component: Reset },
       { path: '/register', component: Auth },
       { path: '/analytics', component: Analytics, meta: { roles: ['admin'], label: 'Аналітика' } },
       { path: '/staff', component: Staff, meta: { roles: ['admin'], label: 'Адміністрування' } },
@@ -47,6 +49,8 @@ export function makeRouter(pinia) {
     const session = useSession(pinia)
     await session.restore()
     if ((to.meta.auth || to.meta.roles) && !session.user) return { path: '/login', query: { next: to.fullPath } }
+    // З тимчасовим паролем сервер дозволяє лише зміну пароля, тож одразу ведемо в профіль.
+    if (session.user?.must_change_password && (to.meta.auth || to.meta.roles) && to.path !== '/profile') return '/profile'
     if (to.meta.roles && !to.meta.roles.includes(session.user.role)) return session.home
     if (session.user && ['/login', '/register'].includes(to.path)) return session.home
   })

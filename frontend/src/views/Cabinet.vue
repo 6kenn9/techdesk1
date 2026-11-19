@@ -23,10 +23,10 @@ const archive = computed(() => orders.value.filter(finished))
 function note(order) {
   const started = order.approved_total != null  // клієнт уже погоджував кошторис: ремонт розпочато
   if (order.status === 'waiting_approval') return started
-    ? 'Ви відмовилися від доплати. Майстер завершить ремонт у погодженому раніше обсязі.'
+    ? 'Ви не погодили зміни кошторису. Майстер завершить ремонт у погодженому раніше обсязі.'
     : 'Кошторис відхилено. Майстер уточнить перелік робіт і зв’яжеться з вами.'
   if (order.status === 'in_repair' && order.client_approval_status === 'pending')
-    return 'Під час ремонту знайдено ще несправність. Майстер готує кошторис доплати: без вашої згоди додаткові роботи не виконуються.'
+    return 'Майстер змінює кошторис і надішле його вам на погодження: без вашої згоди зміни не виконуються.'
   if (order.status === 'in_repair' && order.client_approval_status === 'rejected')
     return 'Ремонт триває в погодженому раніше обсязі.'
   if (order.status === 'ready_for_pickup') {

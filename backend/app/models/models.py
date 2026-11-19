@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from decimal import Decimal
-from sqlalchemy import false, BigInteger, Boolean, SmallInteger, CheckConstraint, DateTime, ForeignKey, Integer, JSON, LargeBinary, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import false, text, BigInteger, Index, Boolean, SmallInteger, CheckConstraint, DateTime, ForeignKey, Integer, JSON, LargeBinary, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from ..core.database import Base
@@ -40,6 +40,9 @@ class User(Base):
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     # вхід через Google пов'язано з кабінетом: кабінет створено через Google або власник один раз підтвердив пароль
     google_linked: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # відновлення пароля листом: зберігається лише хеш одноразового посилання
+    reset_token_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
+    reset_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = timestamp()
 
 class ModelPreset(Base):
@@ -75,6 +78,20 @@ class Order(Base):
         CheckConstraint("warranty_days >= 0 AND paid_amount >= 0", name="valid_order_amounts"),
         CheckConstraint("rating IS NULL OR rating BETWEEN 1 AND 5", name="valid_rating"),
         CheckConstraint("delivery_method IN ('pickup', 'nova_poshta')", name="valid_delivery"),
+        # правила цілісності, які раніше перевіряв лише код (міграція 0012)
+        CheckConstraint("priority IN ('normal', 'urgent')", name="valid_priority"),
+        CheckConstraint("works_total >= 0 AND parts_total >= 0 AND (approved_total IS NULL OR approved_total >= 0)",
+                        name="nonnegative_totals"),
+        CheckConstraint("total_cost = CASE WHEN is_warranty_case THEN 0 ELSE works_total + parts_total END",
+                        name="consistent_total"),
+        CheckConstraint("status NOT IN ('completed', 'returned') OR completed_at IS NOT NULL", name="closed_has_date"),
+        CheckConstraint("rating IS NULL OR status = 'completed'", name="rating_after_completion"),
+        CheckConstraint("delivery_method <> 'nova_poshta' OR (delivery_city <> '' AND delivery_branch <> '')",
+                        name="shipping_address"),
+        # один пристрій — одна відкрита заявка; скасована теж відкрита, доки пристрій не повернуто
+        # (крім онлайн-заявки, пристрій якої так і не надійшов до центру)
+        Index("uq_open_order_per_device", "device_id", unique=True,
+              postgresql_where=text("status NOT IN ('completed', 'returned') AND NOT (status = 'cancelled' AND device_received_at IS NULL)")),
     )
     id: Mapped[int] = mapped_column(primary_key=True)
     order_number: Mapped[str] = mapped_column(String(32), unique=True)
@@ -96,6 +113,8 @@ class Order(Base):
     total_cost: Mapped[Decimal] = money()
     paid_amount: Mapped[Decimal] = money()
     approved_total: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    # склад кошторису (роботи й запчастини), який клієнт погодив; будь-яка зміна потребує нової згоди
+    approved_items: Mapped[str | None] = mapped_column(String(64))
     client_approval_status: Mapped[str] = mapped_column(String(15), default="pending")
     approval_comment: Mapped[str] = mapped_column(Text, default="")
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -115,6 +134,8 @@ class Order(Base):
     delivery_ttn: Mapped[str | None] = mapped_column(String(14))
     created_at: Mapped[datetime] = timestamp()
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # коли пристрій фізично надійшов до центру; для онлайн-заявки порожньо, доки працівник не позначить «Пристрій отримано»
+    device_received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 class SpecHistory(Base):
@@ -131,6 +152,12 @@ class SpecHistory(Base):
 
 class StatusHistory(Base):
     __tablename__ = "order_status_history"
+    __table_args__ = (
+        CheckConstraint("new_status IN ('registered','diagnostics','waiting_approval','in_repair','ready_for_pickup','completed','cancelled','returned')",
+                        name="valid_new_status"),
+        CheckConstraint("old_status IS NULL OR old_status IN ('registered','diagnostics','waiting_approval','in_repair','ready_for_pickup','completed','cancelled','returned')",
+                        name="valid_old_status"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("repair_orders.id"), index=True)
     changed_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
@@ -180,7 +207,8 @@ class Part(Base):
 
 class OrderPart(Base):
     __tablename__ = "order_parts"
-    __table_args__ = (CheckConstraint("quantity > 0 AND unit_cost_price >= 0 AND unit_sale_price >= 0", name="valid_order_part"),)
+    __table_args__ = (CheckConstraint("quantity > 0 AND unit_cost_price >= 0 AND unit_sale_price >= 0", name="valid_order_part"),
+                      CheckConstraint("total_sale_price = quantity * unit_sale_price", name="consistent_part_total"))
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("repair_orders.id"), index=True)
     part_id: Mapped[int] = mapped_column(ForeignKey("spare_parts.id"))
