@@ -43,7 +43,7 @@ services:
       # запити до API йдуть на сервер, тож сайт і API мають одну адресу (як nginx у docker-compose)
       - type: rewrite
         source: /api/*
-        destination: https://techdesk-api.onrender.com/api/*
+        destination: https://techdesk-api-rf1k.onrender.com/api/*
       # односторінковий застосунок: будь-яка сторінка відкриває index.html
       - type: rewrite
         source: /*
