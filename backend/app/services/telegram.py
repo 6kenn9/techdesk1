@@ -1,4 +1,3 @@
-"""Telegram-бот TechDesk: прив'язка чату, сповіщення про етапи ремонту й погодження кошторису."""
 import logging
 import queue
 import threading
@@ -14,30 +13,27 @@ from ..models.models import Device, Order, Service, User, Work, now
 from . import domain
 
 log = logging.getLogger("techdesk.telegram")
-bot = None  # екземпляр Bot, якщо задано TELEGRAM_BOT_TOKEN
+bot = None
 HELP = ("Кнопки меню внизу:\n📋 Мої заявки — стан ремонтів і кошториси, що чекають рішення\n"
         "🛡 Гарантія — до якої дати діє гарантія на ремонти\n➕ Нова заявка — подати заявку на ремонт\n"
         "🔕 / 🔔 — призупинити або знову увімкнути сповіщення\n\n"
         "Щоб підключити сповіщення, відкрийте TechDesk і натисніть «Підключити Telegram».")
 
-# Меню внизу чату: кнопка надсилає свій текст, а бот розуміє його як команду.
 MUTE, UNMUTE = "🔕 Вимкнути сповіщення", "🔔 Увімкнути сповіщення"
 MENU = {"📋 Мої заявки": "/orders", "🛡 Гарантія": "/warranty", "➕ Нова заявка": "/new", "❓ Допомога": "/help",
         MUTE: "/stop", UNMUTE: "/resume"}
 COMMANDS = [("orders", "Мої заявки"), ("warranty", "Гарантія на ремонти"), ("new", "Нова заявка"),
             ("help", "Допомога"), ("stop", "Вимкнути сповіщення"), ("resume", "Увімкнути сповіщення")]
-WARRANTY_NOTICE_DAYS = 7     # за скільки днів попереджати про кінець гарантії
-MAINTENANCE_AFTER_DAYS = 180  # через скільки днів після ремонту радити профілактику
+WARRANTY_NOTICE_DAYS = 7
+MAINTENANCE_AFTER_DAYS = 180
 MAINTENANCE_CATEGORIES = ("Ноутбук", "ПК", "Моноблок", "Міні-ПК", "Консоль")
 
 def menu(role, muted=False):
-    """Клавіатура внизу чату; працівникам гарантія й нова заявка не потрібні. Остання кнопка перемикає сповіщення."""
     rows = [["📋 Мої заявки", "🛡 Гарантія"], ["➕ Нова заявка", "❓ Допомога"]] if role == "client" else [["📋 Мої заявки", "❓ Допомога"]]
     rows.append([UNMUTE if muted else MUTE])
     return {"keyboard": [[{"text": text} for text in row] for row in rows], "resize_keyboard": True, "is_persistent": True}
 
 def public_site():
-    """Telegram відхиляє кнопки-посилання на localhost і внутрішні IP, тож для них кнопок не робимо."""
     host = urlsplit(PUBLIC_URL).hostname or ""
     if host == "localhost" or "." not in host:
         return False
@@ -48,7 +44,6 @@ def public_site():
         return True
 
 def with_link(text, label, path):
-    """Повертає (текст, кнопки): кнопка для публічного сайту, інакше посилання в тексті."""
     url = f"{PUBLIC_URL}{path}"
     if public_site():
         return text, [[{"text": label, "url": url}]]
@@ -58,7 +53,6 @@ def date_text(value):
     return domain.local_date(value).strftime("%d.%m.%Y")
 
 def repair_hours(db, order):
-    """Орієнтовна тривалість робіт за прейскурантом; None, якщо роботи додано вручну."""
     hours = db.scalar(select(func.sum(Service.estimated_hours)).join(Work, Work.service_id == Service.id).where(Work.order_id == order.id))
     return float(hours) if hours else None
 
@@ -86,7 +80,7 @@ def status_text(db, order, title):
     status = order.status
     buttons = None
     if status == "waiting_approval":
-        extra = order.approved_total is not None  # кошторис змінили під час ремонту
+        extra = order.approved_total is not None
         lines = ["💰 Кошторис змінено — потрібна ваша згода" if extra else "💰 Кошторис готовий", title, ""]
         if extra:
             lines.append(f"Під час ремонту перелік робіт або запчастин змінився. Раніше погоджено: {money(order.approved_total)}.")
@@ -96,7 +90,7 @@ def status_text(db, order, title):
                   f"До сплати: {money(order.total_cost)}"]
         hours = repair_hours(db, order)
         if hours:
-            days = max(1, round(hours / 6 + 0.49))  # приблизно 6 годин роботи майстра на день
+            days = max(1, round(hours / 6 + 0.49))
             lines.append(f"Орієнтовний строк після погодження: {days} {'робочий день' if days == 1 else 'робочі дні' if days < 5 else 'робочих днів'}")
         if order.is_warranty_case:
             lines.append("Гарантійний випадок — ремонт для вас безкоштовний.")
@@ -108,7 +102,9 @@ def status_text(db, order, title):
     elif status == "ready_for_pickup":
         if order.delivery_method == "nova_poshta":
             text = (f"✅ Ремонт завершено, готуємо відправку Новою Поштою\n{title}\n"
-                    f"Куди: {order.delivery_city}, {order.delivery_branch}\nДо сплати перед відправкою: {money(order.total_cost - order.paid_amount)}")
+                    f"Куди: {order.delivery_city}, {order.delivery_branch}\n"
+                    + (f"Отримувач: {order.delivery_recipient_name}, {order.delivery_recipient_phone}\n" if order.delivery_recipient_name else "")
+                    + f"До сплати перед відправкою: {money(order.total_cost - order.paid_amount)}")
         else:
             text = f"✅ Пристрій готовий до видачі\n{title}\nДо сплати: {money(order.total_cost - order.paid_amount)}"
     elif status == "completed":
@@ -159,10 +155,6 @@ def build_messages(db, kind, order_id):
     return []
 
 def due_reminders(db, moment=None):
-    """Нагадування, які час надіслати: кінець гарантії та планова профілактика.
-
-    Повертає [(order, kind, chat_id, text, buttons)]. Позначку про надсилання ставить викликач.
-    """
     moment = moment or now()
     result = []
     linked = select(User.id).where(User.telegram_chat_id.is_not(None), User.is_active, User.telegram_muted.is_(False))
@@ -174,17 +166,15 @@ def due_reminders(db, moment=None):
         left = max(1, (order.warranty_expires_at - moment).days)
         text = (f"🛡 Гарантія на ремонт закінчується {date_text(order.warranty_expires_at)}\n{order.order_number} · {device.brand} {device.model}\n\n"
                 f"Залишилось днів: {left}. Якщо помітили проблему, пов'язану з цим ремонтом, зверніться до цієї дати: гарантійний ремонт безкоштовний.")
-        # Форма одразу відкривається з цим пристроєм і позначкою «гарантійне звернення».
         result.append((order, "warranty", client.telegram_chat_id,
                        *with_link(text, "Подати гарантійну заявку", f"/orders/new?device={order.device_id}&warranty=1")))
-    # Профілактика: лише останній ремонт пристрою, щоб не радити чистку, якщо пристрій уже знову був у сервісі.
     old = (select(Order).join(Device, Device.id == Order.device_id)
            .where(Order.status == "completed", Order.maintenance_reminded_at.is_(None), Order.client_id.in_(linked),
                   Order.completed_at <= moment - timedelta(days=MAINTENANCE_AFTER_DAYS), Device.device_category.in_(MAINTENANCE_CATEGORIES)))
     for order in db.scalars(old):
         later = db.scalar(select(func.count(Order.id)).where(Order.device_id == order.device_id, Order.created_at > order.completed_at))
         if later:
-            order.maintenance_reminded_at = moment  # пристрій уже повертався, нагадування не потрібне
+            order.maintenance_reminded_at = moment
             continue
         device, client = db.get(Device, order.device_id), db.get(User, order.client_id)
         text = (f"🧹 Час на планову профілактику\n{device.brand} {device.model}\n\n"
@@ -202,7 +192,7 @@ class Bot:
     def start(self):
         if not self.username:
             self.username = self.api("getMe")["username"]
-        try:  # список команд для кнопки «Меню» поруч із полем введення
+        try:
             self.api("setMyCommands", commands=[{"command": c, "description": d} for c, d in COMMANDS])
         except Exception as error:
             log.warning("Не вдалося задати команди бота: %s", error)
@@ -227,7 +217,6 @@ class Bot:
             log.exception("Не вдалося надіслати сповіщення %s", item)
 
     def send(self, chat_id, text, buttons=None, keyboard=None):
-        """buttons — кнопки під повідомленням; keyboard — меню внизу чату."""
         params = {"chat_id": chat_id, "text": text, "link_preview_options": {"is_disabled": True}}
         if buttons:
             params["reply_markup"] = {"inline_keyboard": buttons}
@@ -236,7 +225,6 @@ class Bot:
         self.api("sendMessage", **params)
 
     def send_reminders(self, moment=None):
-        """Надсилає нагадування й позначає їх, щоб не повторювати. Повертає кількість надісланих."""
         sent = 0
         with SessionLocal() as db:
             for order, kind, chat_id, text, buttons in due_reminders(db, moment):
@@ -251,7 +239,7 @@ class Bot:
         return sent
 
     def _reminder_loop(self):
-        while not self.stopping.wait(60):  # перша перевірка через хвилину після запуску, далі щогодини
+        while not self.stopping.wait(60):
             try:
                 self.send_reminders()
             except Exception:
@@ -283,7 +271,7 @@ class Bot:
         except Exception:
             log.exception("Помилка обробки оновлення Telegram")
             chat_id = (update.get("message") or {}).get("chat", {}).get("id")
-            if chat_id:  # користувач має знати, що запит не виконано, а не чекати відповіді
+            if chat_id:
                 try:
                     self.send(chat_id, "Не вдалося виконати команду. Спробуйте ще раз трохи пізніше.")
                 except Exception:
@@ -315,7 +303,6 @@ class Bot:
             self.send(chat_id, "Вітаємо в TechDesk!\n\n" + HELP, keyboard=keyboard)
 
     def _account(self, chat_id):
-        """Роль і стан сповіщень користувача, прив'язаного до чату; (None, False), якщо чат не підключено."""
         with SessionLocal() as db:
             user = db.scalar(select(User).where(User.telegram_chat_id == chat_id, User.is_active))
             return (user.role, user.telegram_muted) if user else (None, False)
@@ -352,7 +339,6 @@ class Bot:
                     "Користуйтеся кнопками меню внизу, щоб не вводити команди вручну."), user.role
 
     def _orders(self, chat_id):
-        """Список активних заявок; кошториси, що чекають рішення, надсилаються окремо з кнопками."""
         with SessionLocal() as db:
             user = db.scalar(select(User).where(User.telegram_chat_id == chat_id, User.is_active))
             if not user:
@@ -396,7 +382,7 @@ class Bot:
         try:
             action, order_id, version = callback.get("data", "").split(":")
             order_id = int(order_id)
-            assert action in ("ap", "rj") and len(version) >= 8  # порожній префікс збігся б із будь-яким кошторисом
+            assert action in ("ap", "rj") and len(version) >= 8
         except (ValueError, AssertionError):
             return answer("Невідома дія.")
         approved = action == "ap"

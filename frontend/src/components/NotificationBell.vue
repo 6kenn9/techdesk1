@@ -4,7 +4,6 @@ import { useRouter } from 'vue-router'
 import { Bell, CheckCheck, CircleX, Inbox, ThumbsDown, ThumbsUp } from 'lucide-vue-next'
 import { api } from '../api'
 import { dateTime } from '../domain'
-// Сповіщення працівника: нові заявки клієнтів, рішення щодо кошторису, скасування. Оновлюється кожні 30 с.
 const router = useRouter()
 const open = ref(false),
   data = ref({ unread: 0, items: [] }),
@@ -15,7 +14,6 @@ async function load() {
   try {
     data.value = await api('/notifications')
   } catch {
-    /* мережа: спробуємо пізніше */
   }
 }
 async function markAll() {

@@ -1,4 +1,3 @@
-"""Етап «Повернуто клієнту» та позначка гарантійного звернення клієнта"""
 from alembic import op
 import sqlalchemy as sa
 revision = '0009'
@@ -16,7 +15,6 @@ def upgrade():
 
 def downgrade():
     op.drop_column('repair_orders', 'warranty_claim')
-    # повернуті заявки в старій схемі можна показати лише як скасовані
     op.execute("UPDATE repair_orders SET status = 'cancelled' WHERE status = 'returned'")
     op.drop_constraint('valid_status', 'repair_orders', type_='check')
     op.create_check_constraint('valid_status', 'repair_orders', OLD)

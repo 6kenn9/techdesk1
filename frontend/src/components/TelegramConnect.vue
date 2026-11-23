@@ -32,7 +32,6 @@ async function connect() {
       try {
         session.user = await api('/auth/me')
       } catch {
-        /* повторимо */
       }
       if (session.user?.telegram_linked || attempts > 60) {
         clearInterval(timer)
@@ -47,7 +46,6 @@ async function connect() {
     busy.value = false
   }
 }
-// Пауза лише зупиняє повідомлення; чат лишається прив'язаним, тож увімкнути можна одним натиском.
 async function setNotifications(enabled) {
   busy.value = true
   try {

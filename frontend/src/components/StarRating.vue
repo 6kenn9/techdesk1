@@ -1,5 +1,4 @@
 <script setup>
-// Зірки 1–5: інтерактивні для вибору оцінки або лише для показу (readonly).
 import { ref } from 'vue'
 import { Star } from 'lucide-vue-next'
 const model = defineModel({ type: Number, default: 0 })

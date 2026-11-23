@@ -38,7 +38,6 @@ const links = [
   ["/staff", "Адміністрування", UsersRound, ["admin"]],
   ["/profile", "Профіль", UserRound, ["admin", "master", "client"]],
 ];
-// Позначка біля «Мого дня»: скільки заявок чекає на дію майстра. Оновлюється при переході між сторінками й раз на хвилину.
 const todo = ref(0);
 let todoTimer;
 async function refreshTodo() {
@@ -49,7 +48,6 @@ async function refreshTodo() {
   try {
     todo.value = workload(await api("/orders"), session.user.id);
   } catch {
-    /* позначка не критична: без неї меню працює як раніше */
   }
 }
 watch(() => [route.path, session.user?.id], refreshTodo);

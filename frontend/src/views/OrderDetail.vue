@@ -17,7 +17,6 @@ const id = useRoute().params.id, session = useSession(), base = '/orders/' + id
 const item = ref(null), error = ref(''), busy = ref(false), modal = ref('')
 const catalog = ref([]), inventory = ref([]), workers = ref([]), deviceWarranty = ref(null)
 
-// Форми
 const edit = reactive({ diagnostics: '', internal_notes: '' })
 const work = reactive({ service_id: null, work_name: '', price: '', field: '', value: '' })
 const spare = reactive({ part_id: null, quantity: 1 })
@@ -27,34 +26,26 @@ const control = reactive({ master_id: null, warranty_days: 90 })
 const cancelReason = ref(''), returnReason = ref('')
 const payment = reactive({ amount: 0, method: 'cash', note: '' })
 const methods = { cash: 'Готівка', card: 'Картка', transfer: 'Переказ' }
-const deliveryForm = ref({ method: 'pickup', city: '', branch: '' }), ttn = ref('')
+const deliveryForm = ref({ method: 'pickup', city: '', branch: '', recipient_name: '', recipient_phone: '' }), ttn = ref('')
 const review = reactive({ rating: 0, comment: '' })
 
-// Що дозволено на поточному етапі
-// Змінювати заявку може адміністратор і її відповідальний майстер; вільну заявку майстер спершу бере собі.
 const staffWrite = computed(() => session.admin || (session.staff && item.value?.master_id === session.user.id))
 const draft = computed(() => staffWrite.value && ['registered', 'diagnostics'].includes(item.value?.status))
-// Кошторис складають під час діагностики й змінюють під час ремонту (кожну зміну погоджує клієнт).
 const diagnosing = computed(() => staffWrite.value && ['diagnostics', 'in_repair'].includes(item.value?.status))
-// Клієнт хоч раз погодив кошторис: ремонт розпочато, встановлені деталі не повертаються на склад.
 const started = computed(() => item.value?.approved_total != null)
 const repaired = computed(() => ['ready_for_pickup', 'completed'].includes(item.value?.status))
 const active = computed(() => !['completed', 'cancelled', 'returned'].includes(item.value?.status))
 const pending = computed(() => item.value?.status === 'waiting_approval' && item.value?.client_approval_status === 'pending')
-// amount_due рахує сервер: після скасування — лише виконане, а без початого ремонту діагностика безкоштовна
 const due = computed(() => Number(item.value?.amount_due ?? item.value?.total_cost ?? 0) - Number(item.value?.paid_amount || 0))
 const noDevice = computed(() => item.value?.status === 'cancelled' && !item.value?.device_received_at)
 const shipping = computed(() => item.value?.delivery_method === 'nova_poshta')
-// Для скасованої заявки спосіб ще можна змінити: пристрій повертають самовивозом або Новою Поштою.
 const canChangeDelivery = computed(() => (active.value || (item.value?.status === 'cancelled' && !noDevice.value)) && !item.value?.delivery_ttn && (!session.staff || staffWrite.value))
 const clientCanCancel = computed(() => item.value?.status === 'registered' ||
   (item.value?.status === 'waiting_approval' && item.value?.client_approval_status === 'rejected' && !started.value))
 const tracking = computed(() => 'https://novaposhta.ua/tracking/?cargo_number=' + item.value?.delivery_ttn)
 const selectedPart = computed(() => inventory.value.find(part => part.id === spare.part_id))
-// Гарантія за попереднім ремонтом цього пристрою: майстер має побачити її до складання кошторису.
 const earlierWarranty = computed(() => active.value && !item.value?.is_warranty_case && deviceWarranty.value?.order_number !== item.value?.order_number ? deviceWarranty.value : null)
 
-// Роботи й запчастини одним списком для таблиці кошторису
 const estimateRows = computed(() => item.value ? [
   ...item.value.works.map(line => ({ key: 'w' + line.id, kind: 'work', id: line.id, name: line.work_name, quantity: 1, sum: line.price })),
   ...item.value.parts.map(line => ({ key: 'p' + line.id, kind: 'part', id: line.id, name: line.part_name, quantity: line.quantity, sum: line.total_sale_price, part: line })),
@@ -75,10 +66,8 @@ let refresh
 onMounted(async () => {
   try {
     assign(await api(base))
-    // Посилання з кабінету й QR-коду ведуть одразу до кошторису або документів.
-    // getElementById, а не querySelector: хеш на кшталт «#1abc» не є коректним CSS-селектором і кинув би помилку.
     if (location.hash) nextTick(() => {
-      try { document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView() } catch { /* некоректний хеш — лишаємося вгорі */ }
+      try { document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView() } catch {}
     })
     if (session.staff) {
       const [services, people, passport] = await Promise.all([api('/warehouse/services'), api('/users?role=master'), api('/passports/' + item.value.device_id), loadStock()])
@@ -86,7 +75,6 @@ onMounted(async () => {
       workers.value = people.filter(person => person.is_active)
       deviceWarranty.value = passport.warranty
     } else {
-      // Клієнт бачить зміни етапу без перезавантаження сторінки.
       refresh = setInterval(async () => {
         if (busy.value || modal.value || document.hidden) return
         try {
@@ -118,7 +106,7 @@ function transition(status, comment = '') { return action('/status', 'PATCH', { 
 function since(value) { const age = ageLabel(value); return age === 'сьогодні' ? 'сьогодні' : age + ' тому' }
 
 function openPayment() { payment.amount = Number(due.value.toFixed(2)); payment.method = 'cash'; payment.note = ''; modal.value = 'payment' }
-function openDelivery() { deliveryForm.value = { method: item.value.delivery_method, city: item.value.delivery_city, branch: item.value.delivery_branch }; modal.value = 'delivery' }
+function openDelivery() { deliveryForm.value = { method: item.value.delivery_method, city: item.value.delivery_city, branch: item.value.delivery_branch, recipient_name: item.value.delivery_recipient_name || '', recipient_phone: item.value.delivery_recipient_phone || '' }; modal.value = 'delivery' }
 function openShip() { ttn.value = ''; modal.value = 'ship' }
 function openReturn() { returnReason.value = ''; modal.value = 'return' }
 function openCancel() { cancelReason.value = ''; modal.value = session.staff ? 'cancel' : 'client-cancel' }
@@ -163,7 +151,6 @@ async function upgrade(line) {
   } catch (e) { session.notify(e.message, 'error') }
 }
 
-// Підказка працівнику: одна головна дія для поточного етапу.
 const guide = computed(() => {
   const o = item.value
   if (!o || !session.staff) return null
@@ -214,7 +201,7 @@ const guide = computed(() => {
         actions: only([{ label: 'Завершити й видати', kind: 'primary', run: () => transition('completed') }, giveBack]) }
     }
     case 'cancelled':
-      if (!o.device_received_at) return null  // пристрій не надходив: заявку закрито, робити нічого
+      if (!o.device_received_at) return null
       if (due.value > 0) return { title: 'Прийміть оплату за виконане', tone: 'warn',
         text: `Ремонт скасовано після початку робіт. Клієнт сплачує вже виконане: ${money(due.value)}. Після оплати поверніть пристрій.`,
         actions: only([{ label: `Прийняти оплату ${money(due.value)}`, kind: 'primary', run: openPayment }, { label: 'Повернути без оплати', run: openReturn }]) }
@@ -227,7 +214,6 @@ const guide = computed(() => {
   return null
 })
 
-// Стан ремонту для клієнта: базові тексти з domain.js, уточнені сумою, доставкою й гарантією.
 const heroIcons = { registered: Inbox, diagnostics: Search, waiting_approval: CircleDollarSign, in_repair: Wrench, ready_for_pickup: PackageCheck, completed: BadgeCheck, cancelled: CircleX, returned: PackageCheck }
 const heroTones = { waiting_approval: 'warn', ready_for_pickup: 'ok', completed: 'ok', cancelled: 'muted', returned: 'muted' }
 const hero = computed(() => {
@@ -277,7 +263,6 @@ const hero = computed(() => {
     </div>
 
     <div class="stack">
-      <!-- Працівник: наступний крок і єдина головна кнопка -->
       <section v-if="guide" class="next-step" :class="guide.tone">
         <div>
           <small>Наступний крок</small>
@@ -289,7 +274,6 @@ const hero = computed(() => {
         </div>
       </section>
 
-      <!-- Клієнт: що зараз відбувається з пристроєм -->
       <section v-if="!session.staff" class="status-hero" :class="hero.tone">
         <span class="status-hero-icon"><component :is="hero.icon" :size="26"/></span>
         <div class="status-hero-body">
@@ -306,7 +290,6 @@ const hero = computed(() => {
         </div>
       </section>
 
-      <!-- Гарантія: помітно і вгорі -->
       <div v-if="item.is_warranty_case" class="alert warranty">
         <ShieldCheck :size="22"/>
         <div><strong>Гарантійний випадок</strong><p>Роботи й запчастини за цією заявкою безкоштовні для клієнта.</p></div>
@@ -325,7 +308,6 @@ const hero = computed(() => {
 
       <div class="cols">
         <div class="stack">
-          <!-- Несправність і діагностика -->
           <section class="card">
             <div class="section-head"><h2>Несправність і діагностика</h2></div>
             <h3>Зі слів клієнта</h3>
@@ -348,7 +330,6 @@ const hero = computed(() => {
             </template>
           </section>
 
-          <!-- Кошторис: роботи, запчастини, підсумок і оплати в одному місці -->
           <section id="estimate" class="card">
             <div class="section-head">
               <h2>Кошторис</h2>
@@ -391,7 +372,6 @@ const hero = computed(() => {
               </li>
             </ul>
 
-            <!-- Рішення клієнта одразу під переліком і сумою -->
             <div v-if="pending && !session.staff" class="approve-box">
               <p>Погоджуючи кошторис, ви дозволяєте майстру виконати перелічені роботи на суму <strong>{{ money(item.total_cost) }}</strong>.</p>
               <div class="actions">
@@ -400,7 +380,6 @@ const hero = computed(() => {
               </div>
             </div>
 
-            <!-- Позиції додають під час діагностики; під час ремонту будь-яку зміну знову погоджує клієнт -->
             <p v-if="diagnosing && item.status === 'in_repair'" class="muted">Будь-яка зміна погодженого кошторису (додати, прибрати чи замінити позицію) потребуватиме згоди клієнта.</p>
             <div v-if="diagnosing" class="estimate-add">
               <div class="segmented">
@@ -444,7 +423,6 @@ const hero = computed(() => {
 
           <PhotoGallery framed title="Фото пристрою" :device-id="item.device_id" :order-id="item.id" :can-upload="staffWrite && active"/>
 
-          <!-- Оцінка ремонту -->
           <section v-if="item.status === 'completed' && (item.rating || !session.staff)" class="card rating-card">
             <template v-if="item.rating">
               <div class="section-head"><h2>{{ session.staff ? 'Оцінка клієнта' : 'Ваша оцінка' }}</h2><small class="muted">{{ dateTime(item.rated_at) }}</small></div>
@@ -462,7 +440,6 @@ const hero = computed(() => {
             </form>
           </section>
 
-          <!-- Історія етапів: згорнута, бо потрібна рідко -->
           <details class="card fold">
             <summary>Історія етапів <span class="chip">{{ item.history.length }}</span></summary>
             <ul class="log">
@@ -475,7 +452,6 @@ const hero = computed(() => {
           </details>
         </div>
 
-        <!-- Праворуч: дані заявки, отримання, документи -->
         <aside class="stack">
           <section class="card">
             <div class="section-head">
@@ -522,6 +498,7 @@ const hero = computed(() => {
               <dl class="meta-list">
                 <div><dt>Місто</dt><dd>{{ item.delivery_city }}</dd></div>
                 <div><dt>Відділення</dt><dd>{{ item.delivery_branch }}</dd></div>
+                <div v-if="item.delivery_recipient_name"><dt>Отримувач</dt><dd>{{ item.delivery_recipient_name }}, {{ item.delivery_recipient_phone }}</dd></div>
                 <div v-if="item.delivery_ttn"><dt>Накладна</dt><dd><a class="ttn" :href="tracking" target="_blank" rel="noopener">{{ item.delivery_ttn }}</a></dd></div>
               </dl>
               <button v-if="staffWrite && !item.delivery_ttn && ['ready_for_pickup', 'cancelled'].includes(item.status) && due <= 0 && !noDevice" class="button" style="margin-top:10px" :disabled="busy" @click="openShip"><Truck :size="17"/> Внести номер накладної</button>
@@ -541,7 +518,6 @@ const hero = computed(() => {
       </div>
     </div>
 
-    <!-- Модальні вікна -->
     <Modal v-if="modal === 'payment'" title="Прийняти оплату" @close="modal = ''">
       <form class="form-stack" @submit.prevent="action('/payments', 'POST', { amount: payment.amount, method: payment.method, note: payment.note }, 'Оплату обліковано.')">
         <p>До сплати: <strong>{{ money(due) }}</strong>. Можна прийняти частину, а решту іншим способом.</p>
@@ -566,7 +542,7 @@ const hero = computed(() => {
 
     <Modal v-if="modal === 'ship'" title="Відправка Новою Поштою" @close="modal = ''">
       <form class="form-stack" @submit.prevent="action('/shipment', 'POST', { ttn }, 'Накладну збережено, клієнта сповіщено.')">
-        <p>Отримувач: <strong>{{ item.client }}</strong><br>{{ item.delivery_city }}, {{ item.delivery_branch }}</p>
+        <p>Отримувач: <strong>{{ item.delivery_recipient_name ? item.delivery_recipient_name + ', ' + item.delivery_recipient_phone : item.client }}</strong><br>{{ item.delivery_city }}, {{ item.delivery_branch }}</p>
         <label>Номер експрес-накладної (ТТН)
           <input v-model.trim="ttn" class="ttn" required inputmode="numeric" pattern="[0-9 ]{14,17}" maxlength="17" placeholder="20 4500 0000 0001">
         </label>

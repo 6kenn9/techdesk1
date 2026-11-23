@@ -57,8 +57,6 @@ def login(payload: Login, db: Db, request: Request):
     login_failures.reset(key)
     return {"access_token": token(user), "user": public_user(user)}
 
-# Скинути пароль і прив'язати кабінет до Google без пароля можна лише для адрес Gmail: їх Google ніколи
-# не видає іншій людині. Робочу чи шкільну адресу на власному домені після звільнення можуть віддати іншому.
 GOOGLE_OWN_DOMAINS = ("gmail.com", "googlemail.com")
 
 def resettable(email):
@@ -66,8 +64,6 @@ def resettable(email):
 
 @router.post("/auth/google")
 def google_login(payload: GoogleLogin, db: Db, request: Request):
-    """Вхід через Google. Відомий e-mail — вхід в існуючий кабінет; новий — реєстрація клієнта,
-    для якої потрібен телефон (Google його не повідомляє)."""
     from ..services import google
     if not GOOGLE_CLIENT_ID:
         fail(503, "Вхід через Google не налаштовано на сервері.")
@@ -85,12 +81,8 @@ def google_login(payload: GoogleLogin, db: Db, request: Request):
         if not user.is_active:
             fail(401, "Обліковий запис вимкнено адміністратором.")
         if not user.google_linked:
-            # Пошту під час реєстрації не підтверджують, тож кабінет на цю адресу міг створити хтось інший.
-            # Тому Google не впускає в наявний кабінет автоматично: власник один раз підтверджує пароль.
             can_reset = user.role == "client" and resettable(email)
             if payload.reset_password and can_reset:
-                # Google підтвердив, що пошта належить цій людині. Якщо кабінет на цю адресу раніше створив хтось
-                # інший, його пароль і сеанси після прив'язки більше не діють, тож власником лишається тільки вона.
                 user.password_hash = hasher.hash(secrets.token_urlsafe(32))
                 user.token_version = (user.token_version or 0) + 1
                 user.must_change_password = False
@@ -136,7 +128,6 @@ ROLE_NAMES = {"client": "клієнт", "master": "майстер", "admin": "а
 
 @router.post("/auth/telegram-test")
 def telegram_test(user: Current):
-    """Тестове повідомлення: показує, до якого облікового запису прив’язано цей чат."""
     from ..services import telegram
     if not telegram.bot:
         fail(503, "Telegram-бот не налаштовано на сервері.")
@@ -160,7 +151,6 @@ def telegram_unlink(db: Db, user: Current):
 
 @router.put("/auth/telegram-notifications")
 def telegram_notifications(payload: TelegramNotifications, db: Db, user: Current):
-    """Увімкнути або призупинити сповіщення, не відв'язуючи чат."""
     if user.telegram_chat_id is None:
         fail(409, "Спершу підключіть Telegram.")
     user.telegram_muted = not payload.enabled
@@ -193,7 +183,6 @@ def edit_user(user_id: int, payload: UserEdit, db: Db, user: Admin):
     if user.id == target.id and not payload.is_active:
         fail(409, "Ви не можете вимкнути власний обліковий запис.")
     if target.is_active and not payload.is_active:
-        # усі видані токени перестають діяти й не «оживуть» після повторного ввімкнення
         target.token_version = (target.token_version or 0) + 1
     released = []
     if target.is_active and not payload.is_active and target.role == "master":
@@ -204,7 +193,6 @@ def edit_user(user_id: int, payload: UserEdit, db: Db, user: Admin):
     return dict(public_user(target), released_orders=released)
 
 def release_orders(db, master, admin):
-    """Майстра вимкнено: його незавершені заявки стають вільними, щоб їх узяли інші майстри."""
     from ..services.domain import still_open
     from ..services.inbox import describe, notify_staff
     orders = list(db.scalars(select(Order).where(Order.master_id == master.id, still_open()).with_for_update()))
@@ -215,7 +203,6 @@ def release_orders(db, master, admin):
 
 @router.post("/auth/password", dependencies=[throttle(password_changes, "password")])
 def change_password(payload: PasswordChange, db: Db, user: Current):
-    """Зміна власного пароля. Інші сеанси користувача завершуються, поточний отримує новий токен."""
     if user.email is None:
         fail(409, "Спершу завершіть реєстрацію: вкажіть пошту й пароль у кабінеті.")
     if not verify(payload.current_password, user.password_hash):
@@ -230,8 +217,6 @@ def change_password(payload: PasswordChange, db: Db, user: Current):
 
 @router.post("/auth/forgot", dependencies=[throttle(forgot_requests, "forgot")])
 def forgot_password(payload: ForgotPassword, db: Db):
-    """Лист з одноразовим посиланням для нового пароля. Відповідь однакова для будь-якої пошти,
-    щоб сторонній не міг перевірити, чи зареєстрована адреса."""
     from hashlib import sha256
     from ..core.config import PUBLIC_URL
     from ..services import mail
@@ -248,7 +233,6 @@ def forgot_password(payload: ForgotPassword, db: Db):
 
 @router.post("/auth/reset", dependencies=[throttle(password_changes, "reset")])
 def reset_by_mail(payload: ResetPassword, db: Db):
-    """Новий пароль за посиланням з листа. Посилання одноразове; усі старі сеанси завершуються."""
     from hashlib import sha256
     user = db.scalar(select(User).where(User.reset_token_hash == sha256(payload.token.encode()).hexdigest()).with_for_update())
     if not user or not user.reset_expires_at or user.reset_expires_at < now() or not user.is_active:
@@ -261,12 +245,11 @@ def reset_by_mail(payload: ResetPassword, db: Db):
     return {"access_token": token(user), "user": public_user(user)}
 
 def temporary_password():
-    alphabet = "abcdefghjkmnpqrstuvwxyz23456789"  # без схожих символів l/1, o/0
+    alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
     return "-".join("".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(3))
 
 @router.post("/users/{user_id}/reset-password")
 def reset_password(user_id: int, db: Db, admin: Admin):
-    """Адміністратор видає тимчасовий пароль; усі сеанси користувача завершуються."""
     target = db.get(User, user_id)
     if not target:
         fail(404, "Користувача не знайдено.")
@@ -283,7 +266,6 @@ def reset_password(user_id: int, db: Db, admin: Admin):
 
 @router.post("/users/{user_id}/claim-link")
 def reissue_claim(user_id: int, db: Db, admin: Admin):
-    """Нове особисте посилання для гостьового кабінету, якщо клієнт загубив старе або воно застаріло."""
     from .intake import CLAIM_DAYS, issue_claim
     target = db.get(User, user_id)
     if not target:

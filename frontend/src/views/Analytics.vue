@@ -61,7 +61,6 @@ function trend(key, upIsGood = true) {
     tone: change === 0 ? '' : change > 0 === upIsGood ? 'up' : 'down',
   }
 }
-// Кольори графіків беруться з поточної теми й оновлюються під час її зміни.
 const palette = computed(
   () => (
     resolved.value,
@@ -77,7 +76,6 @@ const palette = computed(
     }
   ),
 )
-// Чотири ключові показники періоду; для грошових показуємо зміну до попереднього періоду.
 const kpis = computed(() =>
   dashboard.value
     ? [

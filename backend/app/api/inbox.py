@@ -1,4 +1,3 @@
-"""Сповіщення працівників на сайті."""
 from fastapi import APIRouter
 from sqlalchemy import func, select, update
 from ..core.security import Db, Staff

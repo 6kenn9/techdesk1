@@ -1,5 +1,4 @@
 @echo off
-rem Резервна копія бази TechDesk з Docker у папку backups (запускати з кореня проєкту).
 chcp 65001 >nul
 cd /d "%~dp0.."
 if not exist backups mkdir backups

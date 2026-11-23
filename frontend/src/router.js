@@ -19,7 +19,6 @@ import Intake from './views/Intake.vue'
 export function makeRouter(pinia) {
   const router = createRouter({
     history: createWebHistory(),
-    // Посилання на розділ головної (#contacts тощо) — одразу до нього, з відступом під липку шапку
     scrollBehavior: (to, from, saved) => to.hash ? { el: to.hash, top: 70, behavior: 'smooth' } : saved || { top: 0 },
     routes: [
       { path: '/', component: Landing },
@@ -49,7 +48,6 @@ export function makeRouter(pinia) {
     const session = useSession(pinia)
     await session.restore()
     if ((to.meta.auth || to.meta.roles) && !session.user) return { path: '/login', query: { next: to.fullPath } }
-    // З тимчасовим паролем сервер дозволяє лише зміну пароля, тож одразу ведемо в профіль.
     if (session.user?.must_change_password && (to.meta.auth || to.meta.roles) && to.path !== '/profile') return '/profile'
     if (to.meta.roles && !to.meta.roles.includes(session.user.role)) return session.home
     if (session.user && ['/login', '/register'].includes(to.path)) return session.home

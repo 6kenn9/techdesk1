@@ -9,7 +9,6 @@ from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-# A separate PostgreSQL database is required so tests exercise real row locks.
 database_url = os.getenv("TEST_DATABASE_URL")
 if not database_url:
     pytest.skip("Set TEST_DATABASE_URL to an empty PostgreSQL database ending in _test.", allow_module_level=True)
@@ -60,7 +59,6 @@ def new_order(client, headers, device_id, **extra):
 _devices = count(1)
 
 def fresh_device(client, admin, owner_id, **extra):
-    """Окремий пристрій для тесту: на один пристрій дозволено лише одну відкриту заявку."""
     return request(client, admin, "POST", "/passports", {"serial_number": f"test-dev-{next(_devices):03d}", "owner_id": owner_id,
                    "device_category": "Ноутбук", "brand": "Test", "model": "Тестовий", **extra}, 201)
 
@@ -194,14 +192,11 @@ def test_cancel_during_repair_keeps_installed_parts(client, identities):
     request(client, admin, "PATCH", path+"/status", {"status":"cancelled"}, 422)
     cancelled = request(client, admin, "PATCH", path+"/status", {"status":"cancelled", "comment":"Клієнт забрав пристрій"})
     assert cancelled["status"] == "cancelled"
-    # ремонт уже почався: встановлена деталь не повертається на склад
     assert request(client, admin, "GET", "/warehouse/parts?q=TEST-CANCEL")[0]["quantity_in_stock"] == 1
-    # клієнт платить за виконане (погоджену суму); діагностика й неначаті ремонти безкоштовні
     assert Decimal(str(cancelled["amount_due"])) == Decimal(str(cancelled["approved_total"])) > 0
     request(client, admin, "PATCH", path+"/status", {"status":"returned"}, 422)
     paid = request(client, admin, "POST", path+"/payments", {"amount":str(cancelled["amount_due"]), "method":"card"}, 201)
     assert Decimal(str(paid["paid_amount"])) == Decimal(str(cancelled["amount_due"]))
-    # скасований пристрій ще в сервісі — закриваємо заявку, коли його віддали
     returned = request(client, admin, "PATCH", path+"/status", {"status":"returned"})
     assert returned["status"] == "returned" and returned["completed_at"] and returned["warranty_expires_at"] is None
     request(client, admin, "PATCH", path+"/status", {"status":"cancelled"}, 409)
@@ -242,12 +237,10 @@ def test_login_rate_limit(client):
     login(client, "admin")
 
 class FakeTelegram:
-    """Замість api.telegram.org: записує виклики, щоб перевірити повідомлення."""
     def __init__(self):
         self.calls = []
 
     def __call__(self, method, **params):
-        # Як справжній Telegram: кнопки-посилання на localhost відхиляються разом із повідомленням.
         for row in (params.get("reply_markup") or {}).get("inline_keyboard", []):
             for button in row:
                 if "url" in button and ("localhost" in button["url"] or "127.0.0.1" in button["url"]):
@@ -316,7 +309,7 @@ def test_telegram_notifications_and_approval(client, identities, telegram_bot):
 
     before = len(fake.sent(7001))
     bot.handle_update(tg_message(7001, "/orders"))
-    listing = fake.sent(7001)[before]  # спершу список, далі кошториси, що чекають рішення
+    listing = fake.sent(7001)[before]
     assert listing["text"].startswith("Активні заявки") and order["order_number"] in listing["text"]
     assert request(client, customer, "DELETE", "/auth/telegram-link")["telegram_linked"] is False
 
@@ -360,7 +353,6 @@ def test_analytics_and_jsonb(client, identities):
     orders = request(client, admin, "GET", "/orders")
     done = [order for order in orders if order["status"]=="completed"]
     returned = [order for order in orders if order["status"]=="returned"]
-    # виручка: повна сума завершених ремонтів і фактичні оплати за повернутими без видачі
     assert analytics["revenue"] == sum(order["total_cost"] for order in done) + sum(order["paid_amount"] for order in returned)
     assert analytics["profit"] == analytics["revenue"] - analytics["parts_cost"]
     assert sum(m["completed"] for m in analytics["staff"]) == len(done)
@@ -381,14 +373,12 @@ def test_quick_request_without_registration(client, identities):
     master, worker = identities["master"]
     payload = {"full_name": "Іван Швидкий", "phone": "050 777-88-99", "problem_description": "Не вмикається",
                "device": {"device_category": "Ноутбук", "brand": "ASUS", "model": "Zenbook 14"}}
-    # приманка для ботів: заявка не створюється
     bot = client.post("/api/quick-request", json=dict(payload, website="http://spam"))
     assert bot.status_code == 201 and bot.json()["claim_token"] is None
     created = client.post("/api/quick-request", json=payload)
     assert created.status_code == 201, created.text
     result = created.json()
     assert result["claim_token"] and result["order_number"].startswith("TD-")
-    # той самий телефон: нового кабінету не видаємо, токен не повторюється
     again = client.post("/api/quick-request", json=payload).json()
     assert again["claim_token"] is None and again["account_exists"]
     session = client.post("/api/auth/claim", json={"token": result["claim_token"]})
@@ -398,18 +388,15 @@ def test_quick_request_without_registration(client, identities):
     orders = request(client, guest, "GET", "/orders")
     assert {item["order_number"] for item in orders} >= {result["order_number"]}
     order_id = result["order_id"]
-    # без серійного номера діагностику не розпочати
     request(client, admin, "PUT", f"/orders/{order_id}", {"master_id": worker["id"]})
-    request(client, master, "POST", f"/orders/{order_id}/receive")  # клієнт приніс пристрій
+    request(client, master, "POST", f"/orders/{order_id}/receive")
     request(client, master, "PATCH", f"/orders/{order_id}/status", {"status": "diagnostics"}, 409)
     device_id = orders[-1]["device_id"] if "device_id" in orders[-1] else request(client, admin, "GET", f"/orders/{order_id}")["device_id"]
     request(client, master, "PATCH", f"/passports/{device_id}/serial", {"serial_number": "quick-sn-001"})
     request(client, master, "PATCH", f"/passports/{device_id}/serial", {"serial_number": "TD-ASU-10482"}, 409)
     request(client, master, "PATCH", f"/orders/{order_id}/status", {"status": "diagnostics"})
-    # PDF та наліпка працюють і без пошти клієнта
     assert client.get(f"/api/passports/{device_id}/label", headers=admin).content.startswith(b"%PDF")
     assert client.get(f"/api/orders/{order_id}/pdf/receipt", headers=admin).content.startswith(b"%PDF")
-    # завершення реєстрації
     done = request(client, guest, "POST", "/auth/complete-registration",
                    {"email": "Quick@Example.com", "password": "long-password"})
     assert done["email"] == "quick@example.com" and not done["is_guest"]
@@ -428,11 +415,10 @@ def test_staff_express_intake(client, identities):
     assert first["claim_token"] and first["master_id"] == worker["id"]
     found = request(client, master, "GET", "/users/lookup?phone=%2B380509990011")
     assert found["is_guest"] and found["devices"][0]["serial_number"] == "INTAKE-001"
-    # повторне звернення: наявний пристрій, нового кабінету немає; поки перша заявка відкрита, другу не створити
     repeat = {"device_id": found["devices"][0]["id"], "problem_description": "Не заряджається"}
     request(client, master, "POST", "/orders/intake", repeat, 409)
     request(client, master, "PATCH", f"/orders/{first['id']}/status", {"status": "cancelled"})
-    request(client, master, "POST", "/orders/intake", repeat, 409)  # скасовано, але пристрій ще в сервісі
+    request(client, master, "POST", "/orders/intake", repeat, 409)
     request(client, master, "PATCH", f"/orders/{first['id']}/status", {"status": "returned"})
     second = request(client, master, "POST", "/orders/intake", repeat, 201)
     assert second["claim_token"] is None and second["client_id"] == found["id"]
@@ -442,7 +428,6 @@ def test_staff_express_intake(client, identities):
     assert models and set(models[0]) == {"device_category", "brand", "model"}
 
 def test_telegram_test_message_goes_to_own_chat(client, identities, telegram_bot):
-    """Кожен користувач отримує тестове повідомлення лише у власний чат."""
     bot, fake = telegram_bot
     master, _ = identities["master"]
     customer, _ = identities["client"]
@@ -470,12 +455,11 @@ def test_password_change_and_admin_reset(client, identities):
     assert "token_version" not in first["user"] and first["user"]["must_change_password"] is False
     request(client, customer, "POST", "/auth/password", {"current_password": "wrong-pass", "new_password": "new-secret-1"}, 400)
     changed = request(client, customer, "POST", "/auth/password", {"current_password": "start-pass-1", "new_password": "new-secret-1"})
-    request(client, customer, "GET", "/auth/me", status=401)  # старий токен більше не діє
+    request(client, customer, "GET", "/auth/me", status=401)
     fresh = {"Authorization": "Bearer " + changed["access_token"]}
     assert request(client, fresh, "GET", "/auth/me")["id"] == person["id"]
     sign_in("start-pass-1", 401)
     sign_in("new-secret-1")
-    # скидання адміністратором: тимчасовий пароль, старі сеанси завершено, вимога змінити пароль
     request(client, fresh, "POST", f"/users/{person['id']}/reset-password", None, 403)
     reset = request(client, admin, "POST", f"/users/{person['id']}/reset-password")
     temporary = reset["temporary_password"]
@@ -484,7 +468,6 @@ def test_password_change_and_admin_reset(client, identities):
     login_result = sign_in(temporary)
     assert login_result["user"]["must_change_password"] is True
     session = {"Authorization": "Bearer " + login_result["access_token"]}
-    # тимчасовий пароль відкриває лише зміну пароля: решту перевіряє сервер, а не лише інтерфейс
     request(client, session, "GET", "/orders", status=403)
     request(client, session, "GET", "/passports", status=403)
     assert request(client, session, "GET", "/auth/me")["must_change_password"] is True
@@ -497,7 +480,6 @@ def test_password_change_and_admin_reset(client, identities):
 def test_spec_suggestion_and_preset_from_intake(client, identities):
     master, _ = identities["master"]
     customer, _ = identities["client"]
-    # пошук за словами в довільному порядку й регістрі
     names = {(m["brand"], m["model"]) for m in client.get("/api/public/models?q=f15 TUF").json()}
     assert ("ASUS", "TUF Gaming F15 FX506HC") in names
     preset = request(client, master, "GET", "/passports/spec-suggestion?category=Ноутбук&brand=asus&model=tuf gaming f15 fx506hc")
@@ -511,7 +493,6 @@ def test_spec_suggestion_and_preset_from_intake(client, identities):
             "model": "Swift Go 14", "specifications": specs}}, 201)
     from_device = request(client, master, "GET", unknown)
     assert from_device == {"source": "device", "specifications": specs}
-    # друге приймання з позначкою «зберегти в довідник» — модель з’являється в довіднику й підказках
     request(client, master, "POST", "/orders/intake", {"phone": "0631230002", "full_name": "Другий Власник",
             "problem_description": "Чистка", "save_preset": True, "device": {"device_category": "Ноутбук",
             "brand": "Acer", "model": "Swift Go 14", "specifications": specs}}, 201)
@@ -527,12 +508,11 @@ def test_client_cancel_and_staff_notifications(client, identities):
     customer, person = identities["client"]
     device = fresh_device(client, admin, identities["client"][1]["id"])
     before_admin, before_master = unread(client, admin)["unread"], unread(client, master)["unread"]
-    order = new_order(client, customer, device["id"])  # заявка від клієнта — сповіщення працівникам
+    order = new_order(client, customer, device["id"])
     after = unread(client, admin)
     assert after["unread"] == before_admin + 1 and after["items"][0]["order_number"] == order["order_number"]
     assert "Нова заявка" in after["items"][0]["text"] and unread(client, master)["unread"] == before_master + 1
     request(client, customer, "GET", "/notifications", status=403)
-    # працівник не користується маршрутом клієнта; чужу заявку клієнт не бачить
     request(client, admin, "POST", f"/orders/{order['id']}/cancel", {}, 403)
     request(client, identities["other"][0], "POST", f"/orders/{order['id']}/cancel", {}, 404)
     done = request(client, customer, "POST", f"/orders/{order['id']}/cancel", {"comment": "Передумав"})
@@ -540,14 +520,11 @@ def test_client_cancel_and_staff_notifications(client, identities):
     assert request(client, admin, "GET", f"/orders/{order['id']}")["history"][-1]["comment"] == "Скасовано клієнтом: Передумав"
     assert "скасував" in unread(client, admin)["items"][0]["text"]
     request(client, customer, "POST", f"/orders/{order['id']}/cancel", {}, 409)
-    # пристрій онлайн-заявки так і не надійшов: заявку закрито одразу, повертати нічого
     assert done["completed_at"] and not done["device_received_at"]
     request(client, admin, "PATCH", f"/orders/{order['id']}/status", {"status": "returned"}, 409)
-    # після початку роботи скасувати може лише центр
     started = new_order(client, admin, device["id"], master_id=worker["id"])
     request(client, master, "PATCH", f"/orders/{started['id']}/status", {"status": "diagnostics"})
     request(client, customer, "POST", f"/orders/{started['id']}/cancel", {}, 409)
-    # рішення клієнта щодо кошторису потрапляє майстру
     request(client, master, "PUT", f"/orders/{started['id']}", {"diagnostics": "Чистка"})
     request(client, master, "POST", f"/orders/{started['id']}/works", {"work_name": "Чистка", "price": "300.00"}, 201)
     request(client, master, "PATCH", f"/orders/{started['id']}/status", {"status": "waiting_approval"})
@@ -560,7 +537,6 @@ def test_client_cancel_and_staff_notifications(client, identities):
     assert unread(client, master)["items"][0]["read"] is True
     request(client, master, "POST", "/notifications/read", {})
     assert unread(client, master)["unread"] == 0
-    # після відмови від кошторису клієнт може скасувати заявку сам; деталей у кошторисі немає, ремонт не почався
     dropped = request(client, customer, "POST", f"/orders/{started['id']}/cancel", {"comment": "Дорого"})
     assert dropped["status"] == "cancelled" and "скасував" in unread(client, master)["items"][0]["text"]
 
@@ -569,15 +545,15 @@ def test_payments_methods_and_csv_export(client, identities):
     customer, _ = identities["client"]
     device = fresh_device(client, admin, identities["client"][1]["id"])
     path = to_repair(client, admin, customer, device["id"], price="1000.00")
-    request(client, admin, "POST", path+"/payments", {"amount": "100.00", "method": "cash"}, 409)  # ще в ремонті
+    request(client, admin, "POST", path+"/payments", {"amount": "100.00", "method": "cash"}, 409)
     request(client, admin, "PATCH", path+"/status", {"status": "ready_for_pickup"})
     request(client, admin, "POST", path+"/payments", {"amount": "400.00", "method": "cash"}, 201)
-    request(client, admin, "POST", path+"/payments", {"amount": "700.00", "method": "card"}, 422)  # більше за залишок
+    request(client, admin, "POST", path+"/payments", {"amount": "700.00", "method": "card"}, 422)
     request(client, admin, "POST", path+"/payments", {"amount": "600.00", "method": "bitcoin"}, 422)
     request(client, admin, "PATCH", path+"/status", {"status": "completed"}, 409)
     paid = request(client, admin, "POST", path+"/payments", {"amount": "600.00", "method": "card", "note": "Термінал"}, 201)
     assert Decimal(str(paid["paid_amount"])) == Decimal("1000") and [p["method"] for p in paid["payments"]] == ["cash", "card"]
-    request(client, admin, "PUT", path, {"paid_amount": "500.00"}, 422)  # зменшити облік не можна
+    request(client, admin, "PUT", path, {"paid_amount": "500.00"}, 422)
     request(client, admin, "PATCH", path+"/status", {"status": "completed"})
     methods = request(client, admin, "GET", "/analytics/dashboard")["payment_methods"]
     assert Decimal(methods["card"]) >= Decimal("600") and Decimal(methods["cash"]) >= Decimal("400")
@@ -597,17 +573,17 @@ def test_client_rates_completed_repair(client, identities):
     device = fresh_device(client, admin, identities["client"][1]["id"])
     path = to_repair(client, admin, customer, device["id"], price="200.00")
     master_id = request(client, admin, "GET", path)["master_id"]
-    request(client, customer, "POST", path+"/rating", {"rating": 5}, 409)  # ще не завершено
+    request(client, customer, "POST", path+"/rating", {"rating": 5}, 409)
     request(client, admin, "PATCH", path+"/status", {"status": "ready_for_pickup"})
     request(client, admin, "POST", path+"/payments", {"amount": "200.00", "method": "card"}, 201)
     request(client, admin, "PATCH", path+"/status", {"status": "completed"})
     before = unread(client, admin)["unread"]
-    request(client, admin, "POST", path+"/rating", {"rating": 5}, 403)   # працівник себе не оцінює
-    request(client, other, "POST", path+"/rating", {"rating": 1}, 404)   # чужа заявка
+    request(client, admin, "POST", path+"/rating", {"rating": 5}, 403)
+    request(client, other, "POST", path+"/rating", {"rating": 1}, 404)
     request(client, customer, "POST", path+"/rating", {"rating": 6}, 422)
     rated = request(client, customer, "POST", path+"/rating", {"rating": 4, "comment": "Швидко, але довго чекав дзвінка"})
     assert rated["rating"] == 4 and rated["rating_comment"].startswith("Швидко") and rated["rated_at"]
-    request(client, customer, "POST", path+"/rating", {"rating": 5}, 409)  # оцінка одна
+    request(client, customer, "POST", path+"/rating", {"rating": 5}, 409)
     assert unread(client, admin)["unread"] == before + 1
     assert "★★★★☆" in request(client, admin, "GET", "/notifications")["items"][0]["text"]
     stats = request(client, admin, "GET", "/analytics/dashboard")
@@ -622,22 +598,22 @@ def test_nova_poshta_delivery(client, identities, telegram_bot):
     link_telegram(client, bot, customer, 7301)
     device = fresh_device(client, admin, identities["client"][1]["id"])
     request(client, customer, "POST", "/orders", {"device_id": device["id"], "problem_description": "Не заряджається",
-            "delivery": {"method": "nova_poshta", "city": "Львів"}}, 422)  # без відділення
+            "delivery": {"method": "nova_poshta", "city": "Львів"}}, 422)
     path = to_repair(client, admin, customer, device["id"], price="500.00",
                      delivery={"method": "nova_poshta", "city": "Львів", "branch": "Відділення №12"})
     order = request(client, customer, "GET", path)
     assert (order["delivery_method"], order["delivery_city"]) == ("nova_poshta", "Львів")
-    request(client, admin, "POST", path+"/shipment", {"ttn": "20450000000001"}, 409)  # ще в ремонті
+    request(client, admin, "POST", path+"/shipment", {"ttn": "20450000000001"}, 409)
     request(client, admin, "PATCH", path+"/status", {"status": "ready_for_pickup"})
     assert "відправку Новою Поштою" in fake.sent(7301)[-1]["text"]
-    request(client, admin, "POST", path+"/shipment", {"ttn": "20450000000001"}, 409)  # не оплачено
+    request(client, admin, "POST", path+"/shipment", {"ttn": "20450000000001"}, 409)
     request(client, admin, "POST", path+"/payments", {"amount": "500.00", "method": "transfer"}, 201)
-    request(client, admin, "PATCH", path+"/status", {"status": "completed"}, 409)  # немає ТТН
+    request(client, admin, "PATCH", path+"/status", {"status": "completed"}, 409)
     request(client, admin, "POST", path+"/shipment", {"ttn": "12345"}, 422)
     shipped = request(client, admin, "POST", path+"/shipment", {"ttn": "2045 0000 0000 01"})
     assert shipped["delivery_ttn"] == "20450000000001"
     assert "cargo_number=20450000000001" in fake.sent(7301)[-1]["text"]
-    request(client, customer, "PUT", path+"/delivery", {"method": "pickup"}, 409)  # уже відправлено
+    request(client, customer, "PUT", path+"/delivery", {"method": "pickup"}, 409)
     assert request(client, admin, "PATCH", path+"/status", {"status": "completed"})["status"] == "completed"
     assert "Будемо вдячні за оцінку" in fake.sent(7301)[-1]["text"]
     exported = client.get("/api/orders/export.csv?q=" + order["order_number"], headers=admin).content.decode("utf-8-sig")
@@ -653,9 +629,13 @@ def test_client_changes_delivery_before_shipping(client, identities):
     before = unread(client, admin)["unread"]
     changed = request(client, customer, "PUT", path+"/delivery", {"method": "nova_poshta", "city": "Київ", "branch": "Поштомат №3301"})
     assert changed["delivery_branch"] == "Поштомат №3301" and unread(client, admin)["unread"] == before + 1
-    request(client, admin, "POST", path+"/shipment", {"ttn": "20450000000002"}, 409)  # ще не відремонтовано
-    back = request(client, customer, "PUT", path+"/delivery", {"method": "pickup", "city": "Київ", "branch": "x"})
-    assert (back["delivery_method"], back["delivery_city"], back["delivery_branch"]) == ("pickup", "", "")
+    request(client, admin, "POST", path+"/shipment", {"ttn": "20450000000002"}, 409)
+    shipping = {"method": "nova_poshta", "city": "Київ", "branch": "Поштомат №3301"}
+    request(client, customer, "PUT", path+"/delivery", {**shipping, "recipient_name": "Петренко Іван"}, 422)
+    other = request(client, customer, "PUT", path+"/delivery", {**shipping, "recipient_name": "Петренко Іван", "recipient_phone": "050 123-45-67"})
+    assert (other["delivery_recipient_name"], other["delivery_recipient_phone"]) == ("Петренко Іван", "+380501234567")
+    back = request(client, customer, "PUT", path+"/delivery", {"method": "pickup", "city": "Київ", "branch": "x", "recipient_name": "Петренко Іван", "recipient_phone": "0501234567"})
+    assert (back["delivery_method"], back["delivery_city"], back["delivery_branch"], back["delivery_recipient_name"]) == ("pickup", "", "", "")
 
 def test_telegram_menu_and_commands(client, identities, telegram_bot):
     bot, fake = telegram_bot
@@ -667,14 +647,12 @@ def test_telegram_menu_and_commands(client, identities, telegram_bot):
     assert keyboard == ["📋 Мої заявки", "🛡 Гарантія", "➕ Нова заявка", "❓ Допомога", "🔕 Вимкнути сповіщення"]
     link_telegram(client, bot, master, 7402)
     assert [b["text"] for row in fake.sent(7402)[-1]["reply_markup"]["keyboard"] for b in row] == ["📋 Мої заявки", "❓ Допомога", "🔕 Вимкнути сповіщення"]
-    # Кнопка меню надсилає текст, який бот розуміє як команду.
     bot.handle_update(tg_message(7401, "🛡 Гарантія"))
     assert "Гарантія діє" in fake.sent(7401)[-1]["text"] or "Чинних гарантій" in fake.sent(7401)[-1]["text"]
     bot.handle_update(tg_message(7401, "➕ Нова заявка"))
-    assert "/orders/new" in fake.sent(7401)[-1]["text"]  # локальний сайт: посилання текстом, без кнопки
+    assert "/orders/new" in fake.sent(7401)[-1]["text"]
     bot.handle_update(tg_message(7401, "📋 Мої заявки"))
     assert "заявк" in fake.sent(7401)[-1]["text"].lower() or "заявк" in fake.sent(7401)[-2]["text"].lower()
-    # Невідомий чат отримує довідку без меню.
     bot.handle_update(tg_message(7499, "привіт"))
     assert "Вітаємо" in fake.sent(7499)[-1]["text"] and "reply_markup" not in fake.sent(7499)[-1]
 
@@ -689,11 +667,11 @@ def test_telegram_mute_and_resume(client, identities, telegram_bot):
     assert "призупинено" in reply["text"]
     assert reply["reply_markup"]["keyboard"][-1][0]["text"] == "🔔 Увімкнути сповіщення"
     me = request(client, customer, "GET", "/auth/me")
-    assert me["telegram_linked"] is True and me["telegram_muted"] is True  # чат не відв'язано
+    assert me["telegram_linked"] is True and me["telegram_muted"] is True
     before = len(fake.sent(7701))
     order = new_order(client, admin, device["id"])
-    assert len(fake.sent(7701)) == before  # під час паузи сповіщення не надходять
-    bot.handle_update(tg_message(7701, "📋 Мої заявки"))  # команди меню працюють і під час паузи
+    assert len(fake.sent(7701)) == before
+    bot.handle_update(tg_message(7701, "📋 Мої заявки"))
     assert order["order_number"] in fake.sent(7701)[before]["text"]
     bot.handle_update(tg_message(7701, "🔔 Увімкнути сповіщення"))
     assert "увімкнено" in fake.sent(7701)[-1]["text"]
@@ -701,7 +679,6 @@ def test_telegram_mute_and_resume(client, identities, telegram_bot):
     request(client, admin, "PUT", f"/orders/{order['id']}", {"master_id": request(client, admin, "GET", "/users?role=master")[0]["id"]})
     request(client, admin, "PATCH", f"/orders/{order['id']}/status", {"status": "diagnostics"})
     assert "діагностиці" in fake.sent(7701)[-1]["text"]
-    # Те саме із сайту
     assert request(client, customer, "PUT", "/auth/telegram-notifications", {"enabled": False})["telegram_muted"] is True
     assert request(client, customer, "PUT", "/auth/telegram-notifications", {"enabled": True})["telegram_muted"] is False
     request(client, customer, "DELETE", "/auth/telegram-link")
@@ -721,7 +698,6 @@ def test_telegram_estimate_term_and_pending_list(client, identities, telegram_bo
     request(client, admin, "POST", path+"/works", {"service_id": service["id"]}, 201)
     request(client, admin, "PATCH", path+"/status", {"status": "waiting_approval"})
     assert "Орієнтовний строк" in fake.sent(7501)[-1]["text"]
-    # «Мої заявки» повторно надсилає кошторис із кнопками погодження.
     bot.handle_update(tg_message(7501, "📋 Мої заявки"))
     assert "inline_keyboard" in fake.sent(7501)[-1]["reply_markup"]
     assert fake.sent(7501)[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"].startswith("ap:")
@@ -743,7 +719,7 @@ def test_telegram_warranty_and_maintenance_reminders(client, identities, telegra
     with SessionLocal() as db:
         order = db.get(Order, done["id"])
         expires = order.warranty_expires_at
-        order.created_at = order.completed_at = now() - timedelta(days=200)  # пристрій не повертався пів року
+        order.created_at = order.completed_at = now() - timedelta(days=200)
         db.commit()
     moment = expires - timedelta(days=3)
     assert bot.send_reminders(expires - timedelta(days=20)) == 0 or "Гарантія на ремонт" not in fake.sent(7601)[-1]["text"]
@@ -751,15 +727,14 @@ def test_telegram_warranty_and_maintenance_reminders(client, identities, telegra
     texts = [m["text"] for m in fake.sent(7601)]
     assert any("Гарантія на ремонт закінчується" in t and done["order_number"] in t for t in texts)
     before = len(fake.sent(7601))
-    bot.send_reminders(moment)  # повторно не надсилає
+    bot.send_reminders(moment)
     assert len(fake.sent(7601)) == before
     with SessionLocal() as db:
         order = db.get(Order, done["id"])
         assert order.warranty_reminded_at is not None
         maintenance = order.maintenance_reminded_at
-    assert maintenance is not None  # ноутбук пів року без візитів: порадили профілактику
+    assert maintenance is not None
     assert any("планову профілактику" in t for t in texts)
-    # Якщо пристрій знову приносили після ремонту, профілактику не радимо.
     other = to_repair(client, admin, customer, device["id"], price="100.00")
     with SessionLocal() as db:
         order = db.get(Order, done["id"])
@@ -793,33 +768,26 @@ def test_google_login(client, identities, monkeypatch):
     monkeypatch.setattr(google, "verify_credential", fake)
     token = "t" * 30
     assert request(client, {}, "GET", "/auth/options")["google_client_id"] == "test-client.apps.googleusercontent.com"
-    # недійсний токен
     request(client, {}, "POST", "/auth/google", {"credential": "bad" + "x" * 30}, 401)
-    # новий користувач: спершу просимо телефон
     first = request(client, {}, "POST", "/auth/google", {"credential": token})
     assert first["needs_phone"] is True and first["email"] == "newbie@gmail.com"
     created = request(client, {}, "POST", "/auth/google", {"credential": token, "phone": "+380671112233"})
     assert created["user"]["role"] == "client" and created["user"]["email"] == "newbie@gmail.com"
-    # повторний вхід без телефону — той самий кабінет
     again = request(client, {}, "POST", "/auth/google", {"credential": token})
     assert again["user"]["id"] == created["user"]["id"]
     headers = {"Authorization": "Bearer " + again["access_token"]}
     assert request(client, headers, "GET", "/auth/me")["email"] == "newbie@gmail.com"
-    # наявний кабінет за e-mail: Google не впускає автоматично, власник один раз підтверджує пароль
     admin, admin_user = identities["admin"]
     claims["email"] = admin_user["email"]
     assert request(client, {}, "POST", "/auth/google", {"credential": token})["needs_password"] is True
     request(client, {}, "POST", "/auth/google", {"credential": token, "password": "wrong-password"}, 401)
     linked = request(client, {}, "POST", "/auth/google", {"credential": token, "password": "admin123"})
     assert linked["user"]["id"] == admin_user["id"]
-    # далі вхід через Google працює без пароля
     assert request(client, {}, "POST", "/auth/google", {"credential": token})["user"]["id"] == admin_user["id"]
-    # клієнт не знає пароля (кабінет створено через Google до появи прив'язки): прив'язка зі скиданням пароля
     master, master_user = identities["master"]
     claims["email"] = master_user["email"]
     assert request(client, {}, "POST", "/auth/google", {"credential": token})["can_reset"] is False
     assert request(client, {}, "POST", "/auth/google", {"credential": token, "reset_password": True})["needs_password"] is True
-    # робоча адреса на власному домені: її можуть перевидати іншій людині, тому скидання без пароля немає
     work = request(client, {}, "POST", "/auth/register", {"email": "google-work@techdesk.ua", "password": "unknown-pass",
                    "full_name": "Робоча пошта", "phone": "+380631234988"}, 201)
     claims["email"] = work["user"]["email"]
@@ -833,14 +801,12 @@ def test_google_login(client, identities, monkeypatch):
     assert request(client, {}, "POST", "/auth/google", {"credential": token})["can_reset"] is True
     reset = request(client, {}, "POST", "/auth/google", {"credential": token, "reset_password": True})
     assert reset["user"]["id"] == client_user["id"]
-    request(client, old, "GET", "/auth/me", status=401)  # старі сеанси завершено
+    request(client, old, "GET", "/auth/me", status=401)
     assert request(client, {}, "POST", "/auth/google", {"credential": token})["user"]["id"] == client_user["id"]
     request(client, {}, "POST", "/auth/login", {"email": "google-old@gmail.com", "password": "unknown-pass"}, 401)
-    # непідтверджена пошта відхиляється самою перевіркою, вимкнений акаунт — тут
     claims["email"] = "newbie@gmail.com"
     request(client, admin, "PATCH", f"/users/{created['user']['id']}", {"is_active": False, "specialization": ""})
     request(client, {}, "POST", "/auth/google", {"credential": token}, 401)
-    # телефон, що вже є, не дозволяє створити другий кабінет
     claims["email"] = "second@gmail.com"
     request(client, {}, "POST", "/auth/google", {"credential": token, "phone": "+380671112233"}, 409)
 
@@ -863,28 +829,25 @@ def test_excel_exports(client, identities):
     assert any(row[0].value == "Майстри" for row in report.iter_rows())
 
 def test_extra_work_during_repair(client, identities):
-    """Під час ремонту знайшли ще несправність: доплату погоджує клієнт, відмова не зупиняє погоджений ремонт."""
     admin, _ = identities["admin"]
     customer, owner = identities["client"]
     device = fresh_device(client, admin, owner["id"])
     path = to_repair(client, admin, customer, device["id"], price="200.00")
-    request(client, admin, "PATCH", path+"/status", {"status": "waiting_approval"}, 409)  # кошторис не змінювався
+    request(client, admin, "PATCH", path+"/status", {"status": "waiting_approval"}, 409)
     extra = request(client, admin, "POST", path+"/works", {"work_name": "Заміна шлейфу", "price": "150.00"}, 201)
     assert extra["status"] == "in_repair" and extra["client_approval_status"] == "pending"
-    request(client, admin, "PATCH", path+"/status", {"status": "ready_for_pickup"}, 409)  # доплату не погоджено
+    request(client, admin, "PATCH", path+"/status", {"status": "ready_for_pickup"}, 409)
     request(client, admin, "PATCH", path+"/status", {"status": "waiting_approval"})
-    request(client, admin, "PATCH", path+"/status", {"status": "diagnostics"}, 409)  # ремонт уже розпочато
+    request(client, admin, "PATCH", path+"/status", {"status": "diagnostics"}, 409)
     estimate = request(client, customer, "GET", path)
     assert Decimal(str(estimate["approved_total"])) == 200 and Decimal(str(estimate["total_cost"])) == 350
     refused = request(client, customer, "POST", path+"/approve-cost", {"approved": False, "expected_total": estimate["total_cost"],
                       "estimate_version": estimate["estimate_version"], "comment": "Лише основний ремонт"})
     assert refused["client_approval_status"] == "rejected" and Decimal(str(refused["approved_total"])) == 200
-    request(client, customer, "POST", path+"/cancel", {}, 409)  # ремонт уже йде: скасовує лише центр
-    # продовжуємо в погодженому обсязі: додаткову роботу прибрано, згода знову чинна
+    request(client, customer, "POST", path+"/cancel", {}, 409)
     request(client, admin, "PATCH", path+"/status", {"status": "in_repair"})
     extra_line = next(item for item in refused["works"] if item["work_name"] == "Заміна шлейфу")
     assert request(client, admin, "DELETE", f"{path}/works/{extra_line['id']}")["client_approval_status"] == "approved"
-    # друга спроба: клієнт погоджує доплату
     request(client, admin, "POST", path+"/works", {"work_name": "Заміна шлейфу", "price": "150.00"}, 201)
     request(client, admin, "PATCH", path+"/status", {"status": "waiting_approval"})
     estimate = request(client, customer, "GET", path)
@@ -899,22 +862,20 @@ def test_return_device_without_repair(client, identities):
     device = fresh_device(client, admin, owner["id"])
     order = new_order(client, admin, device["id"], delivery={"method": "nova_poshta", "city": "Львів", "branch": "Відділення №1"})
     path = f"/orders/{order['id']}"
-    request(client, admin, "PATCH", path+"/status", {"status": "returned"}, 409)  # спершу скасування
+    request(client, admin, "PATCH", path+"/status", {"status": "returned"}, 409)
     request(client, admin, "PATCH", path+"/status", {"status": "cancelled"})
-    request(client, admin, "PATCH", path+"/status", {"status": "returned"}, 409)  # Нова Пошта: потрібна накладна
-    shipped = request(client, admin, "POST", path+"/shipment", {"ttn": "20450000000077"})  # ремонту не було — без оплати
+    request(client, admin, "PATCH", path+"/status", {"status": "returned"}, 409)
+    shipped = request(client, admin, "POST", path+"/shipment", {"ttn": "20450000000077"})
     assert shipped["delivery_ttn"] == "20450000000077"
     assert request(client, admin, "PATCH", path+"/status", {"status": "returned"})["status"] == "returned"
     request(client, customer, "PUT", path+"/delivery", {"method": "pickup"}, 409)
-    # готовий пристрій, за який клієнт відмовився платити
     other = to_repair(client, admin, customer, device["id"], price="100.00")
     request(client, admin, "PATCH", other+"/status", {"status": "ready_for_pickup"})
     revenue_before = Decimal(str(request(client, admin, "GET", "/analytics/dashboard")["revenue"]))
-    request(client, admin, "POST", other+"/payments", {"amount": "40.00", "method": "cash"}, 201)  # часткова оплата
-    request(client, admin, "PATCH", other+"/status", {"status": "returned"}, 422)  # потрібна причина
+    request(client, admin, "POST", other+"/payments", {"amount": "40.00", "method": "cash"}, 201)
+    request(client, admin, "PATCH", other+"/status", {"status": "returned"}, 422)
     done = request(client, admin, "PATCH", other+"/status", {"status": "returned", "comment": "Клієнт відмовився платити"})
     assert done["status"] == "returned" and done["warranty_expires_at"] is None
-    # отримані гроші за повернутою заявкою потрапляють у виручку
     assert Decimal(str(request(client, admin, "GET", "/analytics/dashboard")["revenue"])) - revenue_before == Decimal("40")
     assert client.get("/api/track", params={"code": done["order_number"]}).json()["label"] == "Повернуто клієнту"
 
@@ -928,21 +889,20 @@ def test_one_open_order_numbering_and_admin_approval(client, identities):
     request(client, admin, "PATCH", f"/orders/{first['id']}/status", {"status": "returned"})
     second = new_order(client, admin, device["id"])
     prefix, number = first["order_number"].rsplit("-", 1)
-    assert second["order_number"] == f"{prefix}-{int(number) + 1:04d}"  # лічильник року, а не id заявки
-    # публічний статус — лише за номером заявки, не за серійним номером із наліпки
+    assert second["order_number"] == f"{prefix}-{int(number) + 1:04d}"
     assert client.get("/api/track", params={"code": device["serial_number"]}).status_code == 404
     assert client.get("/api/track", params={"code": second["order_number"]}).status_code == 200
     path = f"/orders/{second['id']}"
     request(client, admin, "PUT", path, {"master_id": request(client, admin, "GET", "/users?role=master")[0]["id"]})
     request(client, admin, "PATCH", path+"/status", {"status": "diagnostics"})
     request(client, admin, "PUT", path, {"diagnostics": "Потрібна чистка."})
-    request(client, admin, "PATCH", path+"/status", {"status": "waiting_approval"}, 409)  # порожній кошторис
+    request(client, admin, "PATCH", path+"/status", {"status": "waiting_approval"}, 409)
     request(client, admin, "POST", path+"/works", {"work_name": "Чистка", "price": "100.00"}, 201)
     request(client, admin, "PATCH", path+"/status", {"status": "waiting_approval"})
     estimate = request(client, admin, "GET", path)
     by_phone = request(client, admin, "POST", path+"/approve-cost", {"approved": True, "expected_total": estimate["total_cost"],
                        "estimate_version": estimate["estimate_version"], "comment": "Погодив телефоном"})
-    assert by_phone["status"] == "in_repair"  # так само, як після згоди клієнта в кабінеті
+    assert by_phone["status"] == "in_repair"
 
 def test_device_owner_transfer(client, identities):
     admin, _ = identities["admin"]
@@ -952,12 +912,12 @@ def test_device_owner_transfer(client, identities):
     device = fresh_device(client, admin, owner["id"])
     sold = new_order(client, admin, device["id"])
     transfer = f"/passports/{device['id']}/transfer"
-    request(client, admin, "POST", transfer, {"owner_id": buyer["id"]}, 409)  # відкрита заявка
+    request(client, admin, "POST", transfer, {"owner_id": buyer["id"]}, 409)
     request(client, admin, "PATCH", f"/orders/{sold['id']}/status", {"status": "cancelled"})
-    request(client, admin, "POST", transfer, {"owner_id": buyer["id"]}, 409)  # скасовано, але пристрій ще в сервісі
+    request(client, admin, "POST", transfer, {"owner_id": buyer["id"]}, 409)
     request(client, admin, "PATCH", f"/orders/{sold['id']}/status", {"status": "returned"})
     request(client, master, "POST", transfer, {"owner_id": buyer["id"]}, 403)
-    request(client, admin, "POST", transfer, {"owner_id": owner["id"]}, 409)  # той самий власник
+    request(client, admin, "POST", transfer, {"owner_id": owner["id"]}, 409)
     moved = request(client, admin, "POST", transfer, {"owner_id": buyer["id"], "reason": "Продав пристрій"})
     assert moved["owner_id"] == buyer["id"] and moved["spec_history"][0]["field_name"] == "owner"
     request(client, customer, "GET", f"/passports/{device['id']}", status=404)
@@ -970,15 +930,14 @@ def test_client_warranty_claim(client, identities):
     customer, owner = identities["client"]
     plain = fresh_device(client, admin, owner["id"])
     claim = {"problem_description": "Знову не працює", "warranty_claim": True}
-    request(client, customer, "POST", "/orders", dict(claim, device_id=plain["id"]), 422)  # гарантії немає
+    request(client, customer, "POST", "/orders", dict(claim, device_id=plain["id"]), 422)
     covered = device_with_warranty(client, admin, customer, owner["id"])
     order = request(client, customer, "POST", "/orders", dict(claim, device_id=covered["id"]), 201)
-    assert order["warranty_claim"] is True and order["is_warranty_case"] is False  # рішення за працівником
+    assert order["warranty_claim"] is True and order["is_warranty_case"] is False
     assert "Гарантійне звернення" in unread(client, admin)["items"][0]["text"]
     decided = request(client, admin, "PUT", f"/orders/{order['id']}", {"is_warranty_case": True})
     assert decided["is_warranty_case"] is True and Decimal(str(decided["total_cost"])) == 0
 
-# ---- Виправлення за результатами аудиту ----
 
 def test_hardcoded_demo_key_no_longer_signs_tokens(client, identities):
     import jwt
@@ -996,15 +955,12 @@ def test_any_change_after_approval_needs_new_consent(client, identities):
     original = request(client, admin, "GET", path)["works"][0]
     request(client, admin, "DELETE", f"{path}/works/{original['id']}")
     swapped = request(client, admin, "POST", path+"/works", {"work_name": "Зовсім інша робота", "price": "500.00"}, 201)
-    assert swapped["client_approval_status"] == "pending"  # та сама сума, але інший склад
+    assert swapped["client_approval_status"] == "pending"
     request(client, admin, "PATCH", path+"/status", {"status": "ready_for_pickup"}, 409)
-    # повернули погоджений склад — попередня згода знову чинна
     request(client, admin, "DELETE", f"{path}/works/{swapped['works'][0]['id']}")
     restored = request(client, admin, "POST", path+"/works", {"work_name": "Тестова робота", "price": "500.00"}, 201)
     assert restored["client_approval_status"] == "approved"
-    # дописати висновок діагностики можна без нової згоди
     assert request(client, admin, "PUT", path, {"diagnostics": "Додатково: почищено вентилятор."})["client_approval_status"] == "approved"
-    # зменшення суми теж змінює склад: клієнт погоджує нову суму
     cheaper = request(client, admin, "PATCH", f"{path}/works/{restored['works'][0]['id']}", {"work_name": "Тестова робота", "price": "300.00"})
     assert cheaper["client_approval_status"] == "pending"
     request(client, admin, "PATCH", path+"/status", {"status": "waiting_approval"})
@@ -1029,12 +985,12 @@ def test_master_works_only_with_own_orders(client, identities):
     _, owner = identities["client"]
     order = new_order(client, admin, fresh_device(client, admin, owner["id"])["id"])
     path = f"/orders/{order['id']}"
-    request(client, master, "PATCH", path+"/status", {"status": "cancelled"}, 403)  # вільну заявку спершу беруть
+    request(client, master, "PATCH", path+"/status", {"status": "cancelled"}, 403)
     request(client, master, "POST", path+"/works", {"work_name": "Чужа робота", "price": "10.00"}, 403)
     request(client, master, "PUT", path, {"master_id": worker["id"], "internal_notes": "разом із взяттям"}, 403)
     assert request(client, master, "PUT", path, {"master_id": worker["id"]})["master_id"] == worker["id"]
     request(client, master, "PATCH", path+"/status", {"status": "diagnostics"})
-    request(client, admin, "PUT", path, {"master_id": None}, 409)  # після початку діагностики — лише передати іншому
+    request(client, admin, "PUT", path, {"master_id": None}, 409)
 
 def test_serial_number_changes_are_logged(client, identities):
     admin, _ = identities["admin"]
@@ -1070,7 +1026,7 @@ def test_oversized_photo_rejected_before_decoding(client, identities):
     _, owner = identities["client"]
     device = fresh_device(client, admin, owner["id"])
     stream = BytesIO()
-    Image.new("1", (9500, 9500)).save(stream, "PNG")  # кілька кілобайтів, але 90 мегапікселів
+    Image.new("1", (9500, 9500)).save(stream, "PNG")
     response = client.post(f"/api/passports/{device['id']}/photos", headers=admin,
                            files={"file": ("big.png", stream.getvalue(), "image/png")})
     assert response.status_code == 413
@@ -1094,7 +1050,6 @@ def test_guest_gets_clear_message_when_registering(client):
     assert response.status_code == 409 and "особистим посиланням" in response.json()["detail"]
 
 def test_quick_request_for_other_device(client):
-    """Пристрій поза переліком категорій приймається як «Інше», а невідома категорія відхиляється."""
     base = {"full_name": "Гість Принтер", "phone": "0997770031", "problem_description": "Не захоплює папір"}
     other = client.post("/api/quick-request", headers={"X-Real-IP": "10.20.0.5"},
                         json=dict(base, device={"device_category": "Інше", "brand": "HP", "model": "LaserJet 1020"}))
@@ -1104,7 +1059,6 @@ def test_quick_request_for_other_device(client):
     assert unknown.status_code == 422
 
 def test_online_request_waits_for_device(client, identities):
-    """Онлайн-заявку не можна взяти в роботу й видати квитанцію, доки пристрій не надійшов до центру."""
     admin, _ = identities["admin"]
     created = client.post("/api/quick-request", headers={"X-Real-IP": "10.20.0.7"}, json={
         "full_name": "Гість Пошта", "phone": "0997770041", "problem_description": "Не вмикається",
@@ -1120,9 +1074,7 @@ def test_online_request_waits_for_device(client, identities):
     assert client.get("/api"+path+"/pdf/receipt", headers=admin).content.startswith(b"%PDF")
 
 def test_database_enforces_integrity(client, identities):
-    """Правила цілісності діють у самій базі, а не лише в коді API (міграція 0012)."""
     from sqlalchemy.exc import IntegrityError
-    # демодані: «оплачено» у завершених заявках збігається з журналом оплат
     with engine.connect() as db:
         mismatched = db.execute(text("""
             SELECT count(*) FROM repair_orders o
@@ -1137,7 +1089,6 @@ def test_database_enforces_integrity(client, identities):
         "UPDATE repair_orders SET delivery_method = 'nova_poshta', delivery_city = '' WHERE status = 'registered'",
         "UPDATE order_status_history SET new_status = 'lost'",
         "UPDATE order_parts SET total_sale_price = total_sale_price + 1",
-        # друга відкрита заявка на той самий пристрій
         """INSERT INTO repair_orders (order_number, device_id, client_id, status, priority, problem_description, completeness,
                cosmetic_notes, diagnostics, internal_notes, is_warranty_case, works_total, parts_total, total_cost, paid_amount,
                client_approval_status, approval_comment, warranty_days, created_at, updated_at)
@@ -1166,7 +1117,6 @@ def test_cancel_without_started_repair_is_free(client, identities):
     request(client, customer, "POST", path+"/approve-cost", {"approved":False, "expected_total":estimate["total_cost"],
             "estimate_version":estimate["estimate_version"], "comment":"Дорого"})
     cancelled = request(client, customer, "POST", path+"/cancel", {"comment":"Заберу так"})
-    # діагностика безкоштовна: після відмови від кошторису платити нічого
     assert Decimal(str(cancelled["amount_due"])) == 0
     request(client, admin, "POST", path+"/payments", {"amount":"100.00", "method":"cash"}, 409)
     assert request(client, admin, "PATCH", path+"/status", {"status":"returned"})["status"] == "returned"
@@ -1183,7 +1133,6 @@ def test_deactivated_master_releases_orders(client, identities):
     result = request(client, admin, "PATCH", f"/users/{created['id']}", {"is_active":False, "specialization":""})
     assert result["released_orders"] == [order["order_number"]]
     assert request(client, admin, "GET", path)["master_id"] is None
-    # звільнену заявку бере інший майстер і продовжує роботу
     master, worker = identities["master"]
     taken = request(client, master, "PUT", path, {"master_id":worker["id"]})
     assert taken["master_id"] == worker["id"]
@@ -1195,7 +1144,6 @@ def test_forgot_password_by_mail(client, identities):
     request(client, admin, "POST", "/users", {"full_name": "Забудько", "email": "forgot.me@gmail.com",
             "phone": "+380631231234", "password": "old-pass-123", "role": "client"}, 201)
     mail.sent.clear()
-    # відповідь однакова для відомої й невідомої пошти; лист іде лише власнику кабінету
     unknown = client.post("/api/auth/forgot", json={"email": "nobody.here@gmail.com"}).json()
     known = client.post("/api/auth/forgot", json={"email": "Forgot.Me@gmail.com"}).json()
     assert unknown == known and len(mail.sent) == 1 and mail.sent[0]["To"] == "forgot.me@gmail.com"
@@ -1204,7 +1152,6 @@ def test_forgot_password_by_mail(client, identities):
     request(client, {}, "POST", "/auth/reset", {"token": "x" * 30, "new_password": "new-pass-456"}, 400)
     done = request(client, {}, "POST", "/auth/reset", {"token": link, "new_password": "new-pass-456"})
     assert done["access_token"]
-    # посилання одноразове, старий пароль і старі сеанси більше не діють
     request(client, {}, "POST", "/auth/reset", {"token": link, "new_password": "other-pass-789"}, 400)
     assert client.post("/api/auth/login", json={"email": "forgot.me@gmail.com", "password": "old-pass-123"}).status_code == 401
     assert client.post("/api/auth/login", json={"email": "forgot.me@gmail.com", "password": "new-pass-456"}).status_code == 200

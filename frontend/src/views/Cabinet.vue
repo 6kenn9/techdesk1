@@ -11,17 +11,14 @@ import Stage from '../components/Stage.vue'
 const session = useSession(), devices = ref([]), orders = ref([]), error = ref(''), busy = ref(true)
 const guest = reactive({ email: '', password: '' }), saving = ref(false)
 
-// Скасована заявка лишається серед активних, доки пристрій не повернуть клієнту.
 const finished = order => ['completed', 'returned'].includes(order.status)
 const needsDecision = order => order.status === 'waiting_approval' && order.client_approval_status === 'pending'
-// Три групи заявок: потрібне рішення клієнта, ремонт триває, архів.
 const waiting = computed(() => orders.value.filter(needsDecision))
 const active = computed(() => orders.value.filter(order => !finished(order) && !needsDecision(order)))
 const archive = computed(() => orders.value.filter(finished))
 
-// Одне речення про те, що відбувається із заявкою зараз.
 function note(order) {
-  const started = order.approved_total != null  // клієнт уже погоджував кошторис: ремонт розпочато
+  const started = order.approved_total != null
   if (order.status === 'waiting_approval') return started
     ? 'Ви не погодили зміни кошторису. Майстер завершить ремонт у погодженому раніше обсязі.'
     : 'Кошторис відхилено. Майстер уточнить перелік робіт і зв’яжеться з вами.'
@@ -76,7 +73,6 @@ async function pdf(order, kind) {
   <p v-if="error" class="error" role="alert">{{ error }}</p>
 
   <div class="stack">
-    <!-- Гість за посиланням: спершу зберегти доступ -->
     <section v-if="session.user.is_guest" class="card guest-banner">
       <div>
         <h2>Збережіть доступ до кабінету</h2>
@@ -89,7 +85,6 @@ async function pdf(order, kind) {
       </form>
     </section>
 
-    <!-- 1. Потрібна дія клієнта -->
     <section v-if="waiting.length">
       <div class="section-head"><h2>Потрібна ваша дія</h2></div>
       <div v-for="item in waiting" :key="item.id" class="alert warranty section-head">
@@ -101,7 +96,6 @@ async function pdf(order, kind) {
       </div>
     </section>
 
-    <!-- 2. Ремонти, що тривають -->
     <section>
       <div class="section-head"><h2>У ремонті <span class="count">{{ active.length }}</span></h2></div>
       <div v-if="active.length" class="order-list">
@@ -123,7 +117,6 @@ async function pdf(order, kind) {
       </div>
     </section>
 
-    <!-- 3. Пристрої -->
     <section>
       <div class="section-head">
         <h2>Мої пристрої <span class="count">{{ devices.length }}</span></h2>
@@ -133,7 +126,6 @@ async function pdf(order, kind) {
       <div v-else-if="!busy" class="empty">Паспорт пристрою з’явиться після першої заявки.</div>
     </section>
 
-    <!-- 4. Архів: згорнутий, компактними рядками -->
     <details v-if="archive.length" class="card fold">
       <summary>Завершені заявки <span class="chip">{{ archive.length }}</span></summary>
       <div class="table-scroll">

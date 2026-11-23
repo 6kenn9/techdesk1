@@ -31,7 +31,6 @@ const partFields = {
 }
 const serviceFields = { code: '', name: '', category: '', default_price: 0, estimated_hours: 1, warranty_days: 90 }
 let request = 0
-// Критичні залишки показуємо першими: їх треба дозамовити.
 const critical = item => item.quantity_in_stock <= item.min_stock_level
 const sorted = computed(() => [...items.value].sort((a, b) => critical(b) - critical(a) || a.name.localeCompare(b.name, 'uk')))
 function resetFilters() {

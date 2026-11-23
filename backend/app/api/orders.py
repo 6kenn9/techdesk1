@@ -37,26 +37,23 @@ def filtered_orders(db, user, q, status, category, master_id, warranty_only):
 def list_orders(db: Db, user: Current, q: str = Query("", max_length=160), status: str = "",
                 category: str = "", master_id: int | None = None, warranty_only: bool = False):
     orders = filtered_orders(db, user, q, status, category, master_id, warranty_only)
-    loaded = preload(db, orders)  # пристрої й люди одним запитом; змінна тримає їх у сесії до кінця відповіді
+    loaded = preload(db, orders)
     since = stage_started(db, [order.id for order in orders])
     result = [order_summary(db, order, since.get(order.id, order.created_at)) for order in orders]
     del loaded
     return result
 
 def money_text(value):
-    return f"{Decimal(value or 0):.2f}".replace(".", ",")  # Excel з українськими налаштуваннями чекає кому
+    return f"{Decimal(value or 0):.2f}".replace(".", ",")
 
-SAFE_SIGNED = re.compile(r"[+-][\d\s().,-]*")  # телефон +380…, від'ємна сума «-120,50» — не формула
+SAFE_SIGNED = re.compile(r"[+-][\d\s().,-]*")
 
 def csv_cell(value):
-    """Excel виконує клітинку CSV, що починається з = + - @, як формулу (ім'я клієнта «=HYPERLINK(...)»).
-    Такий текст отримує апостроф попереду, а телефони й числа лишаються як є."""
     if isinstance(value, str) and value[:1] in ("=", "@", "\t", "\r", "+", "-") and not SAFE_SIGNED.fullmatch(value):
         return "'" + value
     return value
 
 def csv_response(rows, filename):
-    """CSV для Excel: UTF-8 з BOM (кирилиця відкривається без «кракозябр») і роздільник «;»."""
     buffer = io.StringIO()
     csv.writer(buffer, delimiter=";", lineterminator="\r\n").writerows([csv_cell(value) for value in row] for row in rows)
     return Response(("\ufeff" + buffer.getvalue()).encode("utf-8"), media_type="text/csv; charset=utf-8",
@@ -66,7 +63,6 @@ EXPORT_HEADER = ["Номер", "Створено", "Клієнт", "Телефо
                  "Пріоритет", "Гарантійний", "Сума, грн", "Оплачено, грн", "Завершено", "Отримання", "ТТН", "Оцінка"]
 
 def export_rows(db, orders):
-    """Рядки експорту зі справжніми типами (дата, Decimal, None); CSV далі перетворює їх на текст."""
     devices, people = preload(db, orders)
     rows = []
     for order in orders:
@@ -82,7 +78,7 @@ def export_rows(db, orders):
     return rows
 
 def export_name(extension):
-    return f"techdesk-orders-{local_date(now()).isoformat()}.{extension}"  # дата за київським часом, а не часом сервера
+    return f"techdesk-orders-{local_date(now()).isoformat()}.{extension}"
 
 @router.get("/export.csv")
 def export_orders(db: Db, user: Staff, q: str = Query("", max_length=160), status: str = "",
@@ -100,7 +96,6 @@ def export_orders(db: Db, user: Staff, q: str = Query("", max_length=160), statu
 @router.get("/export.xlsx")
 def export_orders_xlsx(db: Db, user: Staff, q: str = Query("", max_length=160), status: str = "",
                        category: str = "", master_id: int | None = None, warranty_only: bool = False):
-    """Те саме, що CSV, але справжній файл Excel: дати й суми — числа, телефони — текст, ширина колонок."""
     from ..services.excel import table_sheet, xlsx_response
     rows = export_rows(db, filtered_orders(db, user, q, status, category, master_id, warranty_only))
     return xlsx_response(lambda wb: table_sheet(wb, "Заявки", EXPORT_HEADER, rows), export_name("xlsx"))
@@ -133,16 +128,15 @@ def create_order(payload: OrderCreate, db: Db, user: Current):
         fail(422, "На пристрій немає чинної гарантії.")
     fields = payload.model_dump(exclude={"device_id", "new_device"})
     if user.role == "client":
-        fields["priority"] = "normal"  # терміновість визначає працівник центру, а не клієнт
+        fields["priority"] = "normal"
     else:
-        fields["warranty_claim"] = False  # працівник одразу вирішує сам через «Гарантійний випадок»
+        fields["warranty_claim"] = False
     order = new_order(db, user, device, fields)
     db.commit()
     return dict(order_details(db, order, user), active_warranty=active_warranty)
 
 @router.post("/{order_id}/receive")
 def receive_device(order_id: int, db: Db, user: Staff):
-    """Онлайн-заявка: працівник позначає, що клієнт приніс пристрій або його доставила пошта."""
     order = access_order(db, order_id, user, write=True, take=True)
     if order.device_received_at:
         fail(409, "Пристрій уже отримано.")
@@ -159,10 +153,8 @@ def detail(order_id: int, db: Db, user: Current):
 @router.put("/{order_id}")
 def edit(order_id: int, payload: OrderEdit, db: Db, user: Staff):
     fields = payload.model_dump(exclude_unset=True)
-    # Вільну заявку майстер може лише взяти собі; решту змін робить її відповідальний майстер.
     order = access_order(db, order_id, user, write=True, take=fields.get("master_id") == user.id and set(fields) == {"master_id"})
     if "master_id" in fields:
-        # скасовану заявку теж можна взяти: пристрій ще треба повернути клієнту
         if order.status not in ACTIVE and not (order.status == "cancelled" and order.device_received_at):
             fail(409, "Заявку вже закрито.")
         if user.role != "admin" and (order.master_id is not None or fields["master_id"] != user.id):
@@ -171,13 +163,13 @@ def edit(order_id: int, payload: OrderEdit, db: Db, user: Staff):
             fail(409, "Після початку діагностики заявку можна лише передати іншому майстру.")
         validate_master(db, fields["master_id"])
     if "diagnostics" in fields:
-        ensure_estimate_editable(order)  # під час ремонту майстер дописує нову знахідку
+        ensure_estimate_editable(order)
     if "paid_amount" in fields:
         if not payable(order) or fields["paid_amount"] is None or fields["paid_amount"] > amount_due(order):
             fail(422, "Оплату приймають, коли пристрій готовий до видачі, у межах суми замовлення.")
         if fields["paid_amount"] < order.paid_amount:
             fail(422, "Облікову оплату не можна зменшити: кожна оплата зберігається окремим записом.")
-        if fields["paid_amount"] > order.paid_amount:  # сумісність зі старим інтерфейсом: різниця — оплата готівкою
+        if fields["paid_amount"] > order.paid_amount:
             db.add(Payment(order_id=order.id, amount=fields["paid_amount"] - order.paid_amount, method="cash", created_by_id=user.id))
     if "warranty_days" in fields and order.status not in ACTIVE:
         fail(409, "Гарантійний строк завершеного ремонту зафіксовано.")
@@ -229,8 +221,6 @@ def work_values(db, payload):
                 updates_passport_spec=payload.updates_passport_spec)
 
 def sync_warranty(db, order):
-    """Гарантія ремонту — найдовший строк серед послуг прейскуранту в кошторисі.
-    Якщо послуг із прейскуранту немає, лишається строк, заданий працівником."""
     days = db.scalar(select(func.max(Service.warranty_days)).join(Work, Work.service_id == Service.id)
                      .where(Work.order_id == order.id))
     if days is not None:
@@ -240,7 +230,7 @@ def saved(db, order, user, works_changed=False):
     refresh_totals(db, order)
     if works_changed:
         sync_warranty(db, order)
-    recheck_approval(db, order)  # під час ремонту будь-яка зміна погодженого кошторису знову чекає згоди клієнта
+    recheck_approval(db, order)
     db.commit()
     return order_details(db, order, user)
 
@@ -305,14 +295,12 @@ def delete_order_part(order_id: int, line_id: int, db: Db, user: Staff):
     return saved(db, order, user)
 
 def payable(order):
-    """Оплату приймають за готовий ремонт або за виконані роботи скасованого ремонту, поки пристрій у сервісі."""
     return order.status == "ready_for_pickup" or (order.status == "cancelled" and amount_due(order) > 0)
 
 PAYMENT_METHODS = {"cash": "готівка", "card": "картка", "transfer": "переказ"}
 
 @router.post("/{order_id}/payments", status_code=201)
 def add_payment(order_id: int, payload: PaymentInput, db: Db, user: Staff):
-    """Окрема оплата: частину можна прийняти готівкою, решту карткою чи переказом."""
     order = access_order(db, order_id, user, write=True)
     if not payable(order):
         fail(409, "Оплату приймають, коли пристрій готовий до видачі, або за виконані роботи скасованого ремонту.")
@@ -326,7 +314,6 @@ def add_payment(order_id: int, payload: PaymentInput, db: Db, user: Staff):
 
 @router.post("/{order_id}/cancel")
 def client_cancel(order_id: int, payload: ClientCancel, db: Db, user: Current):
-    """Клієнт скасовує власну заявку, поки пристрій не взяли в роботу або після відмови від кошторису."""
     if user.role != "client":
         fail(403, "Працівники змінюють етап заявки в блоці керування.")
     order = access_order(db, order_id, user, write=True)
@@ -334,7 +321,6 @@ def client_cancel(order_id: int, payload: ClientCancel, db: Db, user: Current):
     if order.status != "registered" and not rejected:
         fail(409, "Заявку вже взято в роботу. Щоб скасувати її, зверніться до сервісного центру.")
     comment = payload.comment.strip()
-    # через загальний перехід: зарезервовані під кошторис деталі повертаються на склад
     transition(db, order, "cancelled", user, "Скасовано клієнтом" + (f": {comment}" if comment else ""))
     from ..services.inbox import describe, notify_staff
     notify_staff(db, order, "cancelled", f"Клієнт скасував заявку: {describe(db, order)}" + (f". Причина: {comment}" if comment else ""), user.id)
@@ -343,23 +329,20 @@ def client_cancel(order_id: int, payload: ClientCancel, db: Db, user: Current):
 
 @router.put("/{order_id}/delivery")
 def change_delivery(order_id: int, payload: Delivery, db: Db, user: Current):
-    """Клієнт або працівник змінює спосіб повернення пристрою, доки його не відправлено."""
     order = access_order(db, order_id, user, write=True)
-    # Для скасованої заявки спосіб ще можна змінити: пристрій повертають клієнту самовивозом або Новою Поштою.
     if order.status in CLOSED or order.delivery_ttn or not order.device_received_at and order.status == "cancelled":
         fail(409, "Спосіб отримання вже не можна змінити.")
     for key, value in apply_delivery(payload.model_dump()).items():
         setattr(order, key, value)
     if user.role == "client":
         from ..services.inbox import describe, notify_staff
-        where = f"Нова Пошта, {order.delivery_city}, {order.delivery_branch}" if order.delivery_method == "nova_poshta" else "самовивіз"
+        where = f"Нова Пошта, {order.delivery_city}, {order.delivery_branch}" + (f", отримувач {order.delivery_recipient_name}" if order.delivery_recipient_name else "") if order.delivery_method == "nova_poshta" else "самовивіз"
         notify_staff(db, order, "delivery", f"Клієнт змінив спосіб отримання ({where}): {describe(db, order)}", user.id)
     db.commit()
     return order_details(db, order, user)
 
 @router.post("/{order_id}/shipment")
 def ship(order_id: int, payload: Shipment, db: Db, user: Staff):
-    """Фіксує номер накладної Нової Пошти; клієнт отримує його в Telegram."""
     order = access_order(db, order_id, user, write=True)
     if order.delivery_method != "nova_poshta":
         fail(409, "Клієнт обрав самовивіз.")
@@ -369,16 +352,15 @@ def ship(order_id: int, payload: Shipment, db: Db, user: Staff):
         fail(409, "Пристрій не надходив до центру, тому відправляти нічого.")
     if order.paid_amount < amount_due(order):
         fail(409, "Перед відправкою облікуйте повну оплату замовлення.")
-    if payload.ttn == order.delivery_ttn:  # повторне збереження того самого номера — без зайвого сповіщення клієнту
+    if payload.ttn == order.delivery_ttn:
         return order_details(db, order, user)
-    order.delivery_ttn = payload.ttn  # інший номер — виправлення помилки, клієнт отримає актуальну накладну
+    order.delivery_ttn = payload.ttn
     emit(db, "shipped", order.id)
     db.commit()
     return order_details(db, order, user)
 
 @router.post("/{order_id}/rating")
 def rate(order_id: int, payload: RatingInput, db: Db, user: Current):
-    """Клієнт один раз оцінює завершений ремонт."""
     if user.role != "client":
         fail(403, "Оцінку залишає клієнт.")
     order = access_order(db, order_id, user, write=True)

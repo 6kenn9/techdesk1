@@ -1,5 +1,4 @@
 @echo off
-rem Відновлення бази TechDesk з файлу копії: scripts\restore.bat backups\techdesk_2026-11-10_18-40.sql
 chcp 65001 >nul
 cd /d "%~dp0.."
 if "%~1"=="" (

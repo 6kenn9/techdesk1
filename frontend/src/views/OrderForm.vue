@@ -18,8 +18,7 @@ const devices = ref([]),
   error = ref(''),
   busy = ref(false),
   loaded = ref(false)
-const delivery = ref({ method: 'pickup', city: '', branch: '' })
-// Посилання з нагадування бота (?device=7&warranty=1) одразу обирає пристрій і позначає гарантійне звернення.
+const delivery = ref({ method: 'pickup', city: '', branch: '', recipient_name: '', recipient_phone: '' })
 const warrantyClaim = ref(route.query.warranty === '1')
 const known = computed(() => devices.value.length > 0 && pick.value !== 'new')
 const device = computed(() => devices.value.find(item => item.id === pick.value))

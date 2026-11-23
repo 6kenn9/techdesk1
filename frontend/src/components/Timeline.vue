@@ -3,7 +3,6 @@ import { Check } from 'lucide-vue-next'
 import { stages, statuses } from '../domain'
 const shortLabels = ['Приймання', 'Діагностика', 'Кошторис', 'Ремонт', 'Видача', 'Завершення']
 const props = defineProps({ status: String })
-// Завершена заявка: усі етапи пройдено, тому всі позначені галочкою.
 const position = () => (props.status === 'completed' ? stages.length : stages.findIndex(s => s[0] === props.status))
 </script>
 <template>

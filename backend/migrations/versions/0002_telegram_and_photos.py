@@ -1,4 +1,3 @@
-"""Telegram notifications and device photos"""
 from alembic import op
 import sqlalchemy as sa
 revision = '0002'

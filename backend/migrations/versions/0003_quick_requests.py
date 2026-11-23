@@ -1,4 +1,3 @@
-"""Quick requests: optional e-mail and serial number, claim links for guest accounts"""
 from alembic import op
 import sqlalchemy as sa
 revision = '0003'

@@ -15,12 +15,9 @@ router = APIRouter(prefix="/api/analytics")
 KYIV = ZoneInfo("Europe/Kyiv")
 
 def day_start(day):
-    """Початок доби за київським часом як момент часу (для порівняння з полями timestamptz)."""
     return datetime.combine(day, time(), KYIV)
 
 def period_orders(start, end):
-    """Заявки, потрібні звіту: активні, прийняті за період і завершені за період або попередній такий самий.
-    Точний відбір за київською датою робить dashboard; тут лише відсікаються явно зайві рядки."""
     if not start and not end:
         return select(Order)
     def window(column, low):
@@ -40,19 +37,15 @@ def dashboard(db: Db, user: Admin, start: date | None = None, end: date | None =
     def in_period(value):
         day = local_date(value)
         return (not start or day >= start) and (not end or day <= end)
-    # Гроші рахуються за закритими заявками: завершеними та повернутими клієнту без звичайної видачі.
     closed = [o for o in all_orders if o.status in CLOSED and o.completed_at and in_period(o.completed_at)]
-    finished = [o for o in closed if o.status == "completed"]  # кількість ремонтів, середній чек, оцінки
+    finished = [o for o in closed if o.status == "completed"]
     intake = [o for o in all_orders if in_period(o.created_at)]
     closed_ids = [o.id for o in all_orders if o.status in CLOSED]
     costs = dict(db.execute(select(OrderPart.order_id, func.sum(OrderPart.unit_cost_price * OrderPart.quantity))
                             .where(OrderPart.order_id.in_(closed_ids)).group_by(OrderPart.order_id)).all()) if closed_ids else {}
     def income(order):
-        """Завершена — уся сума замовлення; повернута — лише те, що клієнт фактично сплатив."""
         return order.total_cost if order.status == "completed" else order.paid_amount
     def parts_cost(order):
-        # Повернута до початку ремонту: зарезервовані деталі повернулися на склад, витрат немає.
-        # Повернута після початку ремонту: встановлені деталі списано — це витрата сервісу.
         return costs.get(order.id, 0) if order.status == "completed" or repair_started(order) else 0
     revenue = sum((income(o) for o in closed), Decimal(0))
     cost = sum((parts_cost(o) for o in closed), Decimal(0))
@@ -97,7 +90,7 @@ def dashboard(db: Db, user: Admin, start: date | None = None, end: date | None =
                               for o in sorted(rated, key=lambda o: o.rated_at, reverse=True)[:5]]},
         "revenue": revenue, "parts_cost": cost, "profit": revenue - cost,
         "active": sum(o.status in ACTIVE for o in all_orders),
-        "average": round(repairs_revenue / len(finished), 2) if finished else 0,  # середній чек завершеного ремонту
+        "average": round(repairs_revenue / len(finished), 2) if finished else 0,
         "daily": [dict(values, date=day) for day, values in sorted(daily.items())],
         "statuses": {LABELS[stage]: statuses[stage] for stage in LABELS},
         "categories": dict(Counter(device_categories[order.device_id] for order in intake)),
@@ -112,7 +105,6 @@ def dashboard(db: Db, user: Admin, start: date | None = None, end: date | None =
     }
 
 def attention(db, orders):
-    """Що потребує реакції адміністратора: застряглі заявки, мовчання клієнта, дефіцит деталей."""
     active = [o for o in orders if o.status in ACTIVE]
     since = stage_started(db, [o.id for o in active])
     devices, people = preload(db, active)
@@ -138,7 +130,6 @@ def attention(db, orders):
 
 @router.get("/export.csv")
 def export_dashboard(db: Db, user: Admin, start: date | None = None, end: date | None = None):
-    """Звіт аналітики за період у CSV для Excel."""
     from .orders import csv_response, money_text
     data = dashboard(db, user, start, end)
     period = f"{start:%d.%m.%Y} – {end:%d.%m.%Y}" if start and end else "увесь час"
@@ -160,7 +151,6 @@ def export_dashboard(db: Db, user: Admin, start: date | None = None, end: date |
 
 @router.get("/export.xlsx")
 def export_dashboard_xlsx(db: Db, user: Admin, start: date | None = None, end: date | None = None):
-    """Звіт аналітики за період у файлі Excel."""
     from decimal import Decimal
     from ..services.excel import report_sheet, xlsx_response
     data = dashboard(db, user, start, end)

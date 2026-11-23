@@ -65,7 +65,6 @@ def generate_pdf(db, order, certificate):
                                    ("VALIGN", (0,0), (-1,-1), "TOP")]))
         if order.is_warranty_case:
             story.append(p("Гарантійний випадок: роботи та запчастини надано без оплати клієнтом."))
-        # Фактична сума за переліченими позиціями (для гарантійного випадку — 0), а не сума першого погодження.
         story.extend([table, Spacer(1, 10), p(f"Вартість ремонту до сплати: {format_money(order.total_cost)}"),
                       p(f"Облікована оплата: {format_money(order.paid_amount)}")])
         if order.completed_at:
@@ -98,7 +97,6 @@ def passport_qr(device_id: int, db: Db, user: Current):
     return Response(qr_image(f"{PUBLIC_URL}/passports/{device_id}").getvalue(), media_type="image/png")
 
 def label_pdf(device):
-    """Наліпка 58×40 мм для термопринтера: QR-код паспорта, модель і серійний номер."""
     output, font = BytesIO(), font_name()
     page = canvas.Canvas(output, pagesize=(58 * mm, 40 * mm))
     page.setTitle(f"Наліпка {device.serial_number or device.id}")

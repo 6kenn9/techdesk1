@@ -1,4 +1,3 @@
-"""Client rating of a finished repair and Nova Poshta delivery fields"""
 from alembic import op
 import sqlalchemy as sa
 revision = '0006'

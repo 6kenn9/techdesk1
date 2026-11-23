@@ -1,4 +1,3 @@
-"""Відновлення пароля листом: хеш одноразового посилання та строк його дії."""
 from alembic import op
 import sqlalchemy as sa
 

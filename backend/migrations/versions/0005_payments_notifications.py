@@ -1,4 +1,3 @@
-"""Payments with method and in-app notifications for staff"""
 from alembic import op
 import sqlalchemy as sa
 revision = '0005'
@@ -27,7 +26,6 @@ def upgrade():
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column('read_at', sa.DateTime(timezone=True), nullable=True))
     op.create_index('ix_notifications_user_id', 'notifications', ['user_id'])
-    # Наявні оплати переносимо як готівкові, щоб суми в заявках і нові записи збігалися.
     op.execute("""
         INSERT INTO payments (order_id, amount, method, note, created_by_id, created_at)
         SELECT o.id, o.paid_amount, 'cash', 'Перенесено з попередньої версії',

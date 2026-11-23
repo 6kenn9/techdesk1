@@ -46,7 +46,6 @@ SERVICES = [
     ("Відновлення після залиття", 1400), ("Діагностика ігрової консолі", 0), ("Відновлення даних", 1200),
 ]
 
-# демонстраційні оцінки клієнтів для завершених заявок (ключ — індекс пристрою)
 REVIEWS = {0: (5, "Швидко додали пам’ять, ноутбук літає."), 1: (4, "Добре, але чекав на дзвінок довше, ніж обіцяли."),
            4: (5, "")}
 
@@ -135,7 +134,7 @@ def seed(db):
             order.completed_at = order.created_at + timedelta(days=1)
             order.warranty_expires_at = order.completed_at + timedelta(days=90)
             order.paid_amount = order.total_cost
-            if order.total_cost > 0:  # оплата — окремим записом, як під час звичайної видачі
+            if order.total_cost > 0:
                 db.add(Payment(order_id=order.id, amount=order.total_cost, method=("cash", "card", "transfer")[device_index % 3],
                                created_by_id=order.master_id or users[0].id, created_at=order.completed_at))
             device.known_defects_history = [*device.known_defects_history, description]
@@ -144,7 +143,7 @@ def seed(db):
             order.rated_at = order.completed_at + timedelta(hours=5)
         if stage == "ready_for_pickup":
             order.delivery_method, order.delivery_city, order.delivery_branch = "nova_poshta", "Львів", "Відділення №12"
-        order.status = stage  # після дат і оцінки: база перевіряє, що завершена заявка має дату завершення
+        order.status = stage
         for step in range(1, STAGES.index(stage) + 1):
             db.add(StatusHistory(order_id=order.id, changed_by_id=order.master_id or users[0].id,
                                  old_status=STAGES[step-1], new_status=STAGES[step],

@@ -28,7 +28,6 @@ const filters = reactive({
   warranty_only: false,
   ...session.filters.orders,
 });
-// Майстер бачить свою чергу, а не журнал усього центру; «Усі майстри» вмикає загальний перелік.
 if (isMaster) filters.master_id = "";
 const items = ref([]),
   masters = ref([]),
@@ -46,8 +45,6 @@ async function exportCsv() {
     session.notify(e.message, "error");
   }
 }
-// Розділи журналу відповідають станам роботи: що зараз робить майстер, що чекає на клієнта, що чекає видачі, що закрито.
-// Лічильники рахуються із завантажених заявок, тож враховують пошук, категорію та вибраний обсяг.
 const tabs = [
   [
     "work",
@@ -142,7 +139,6 @@ watch(filters, () => {
   session.filters.orders = { ...filters };
   load();
 });
-// Перехід із «Мого дня» за посиланням ?tab=… змінює розділ і тоді, коли сторінка вже відкрита.
 watch(
   () => route.query.tab,
   (value) => {

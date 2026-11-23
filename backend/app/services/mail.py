@@ -1,5 +1,3 @@
-"""Надсилання листів через SMTP (наприклад, Gmail з паролем застосунку). Лист іде у фоновому потоці,
-щоб відповідь сервера не затримувалася й за часом відповіді не можна було вгадати, чи існує така пошта."""
 import logging
 import smtplib
 import threading
@@ -7,7 +5,7 @@ from email.message import EmailMessage
 from ..core.config import MAIL_FROM, SMTP_HOST, SMTP_PASSWORD, SMTP_PORT, SMTP_USER
 
 log = logging.getLogger("techdesk.mail")
-sent = []  # тести підміняють надсилання й читають листи звідси
+sent = []
 
 def configured():
     return bool(SMTP_HOST and MAIL_FROM)
@@ -32,7 +30,6 @@ def send(to, subject, text):
     message.set_content(text)
     sent.append(message)
     if not configured():
-        # пошту не налаштовано: лист видно лише в журналі сервера (зручно для локального запуску)
         log.warning("SMTP не налаштовано. Лист для %s: %s\n%s", to, subject, text)
         return
     threading.Thread(target=deliver, args=(message,), daemon=True).start()

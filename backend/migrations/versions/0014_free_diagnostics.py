@@ -1,4 +1,3 @@
-"""Безкоштовна діагностика; скасована заявка без пристрою не вважається відкритою."""
 from alembic import op
 
 revision = '0014'
@@ -10,9 +9,7 @@ OPEN_WHERE = "status NOT IN ('completed', 'returned') AND NOT (status = 'cancell
 
 
 def upgrade():
-    # діагностика безкоштовна: послуги з прейскуранту більше не додають суму до кошторису
     op.execute("UPDATE service_catalog SET default_price = 0, warranty_days = 0 WHERE name LIKE 'Діагностика%'")
-    # скасовану онлайн-заявку, пристрій якої не надходив, закриваємо датою скасування
     op.execute("""
         UPDATE repair_orders o SET completed_at = COALESCE(o.completed_at, (
             SELECT max(h.changed_at) FROM order_status_history h WHERE h.order_id = o.id AND h.new_status = 'cancelled'), o.updated_at)

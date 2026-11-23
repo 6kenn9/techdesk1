@@ -13,7 +13,6 @@ Category = Literal["Ноутбук", "ПК", "Моноблок", "Міні-ПК"
 Stage = Literal["registered", "diagnostics", "waiting_approval", "in_repair", "ready_for_pickup", "completed", "cancelled", "returned"]
 
 def normalize_phone(value):
-    """Приводить 050 123-45-67, 0501234567 і 380501234567 до єдиного вигляду +380501234567."""
     if not isinstance(value, str):
         return value
     digits = re.sub(r"[\s\-().]", "", value)
@@ -35,10 +34,7 @@ class Login(Input):
 class GoogleLogin(Input):
     credential: str = Field(min_length=20, max_length=4096)
     phone: Phone | None = None
-    # пароль наявного кабінету: потрібен один раз, щоб пов'язати з ним вхід через Google
     password: str | None = Field(default=None, min_length=1, max_length=128)
-    # клієнт не знає пароля (кабінет створено через Google до появи прив'язки або пароль забуто):
-    # кабінет переходить під Google, старий пароль і всі інші сеанси скасовуються
     reset_password: bool = False
 
 class ForgotPassword(Input):
@@ -78,7 +74,6 @@ class Hardware(Input):
         return value.upper()
 
 class NewDevice(Input):
-    """Пристрій, який вводить клієнт або приймальник: серійний номер і характеристики необов'язкові."""
     serial_number: str | None = Field(default=None, max_length=80)
     device_category: Category
     brand: str = Field(min_length=1, max_length=80)
@@ -111,7 +106,6 @@ class Upgrade(Input):
     order_id: Positive | None = None
 
 class OwnerTransfer(Input):
-    """Пристрій продали або подарували: паспорт переходить до іншого клієнта."""
     owner_id: Positive
     reason: Long = ""
 
@@ -119,16 +113,20 @@ class Defect(Input):
     description: Long = Field(min_length=3)
 
 class Delivery(Input):
-    """Самовивіз або відправка у відділення чи поштомат Нової Пошти."""
     method: Literal["pickup", "nova_poshta"] = "pickup"
     city: str = Field(default="", max_length=80)
     branch: str = Field(default="", max_length=120)
+    recipient_name: str = Field(default="", max_length=150)
+    recipient_phone: Phone | Literal[""] = ""
     @model_validator(mode="after")
     def address_for_shipping(self):
         if self.method == "nova_poshta" and (len(self.city) < 2 or not self.branch):
             raise ValueError("Для відправки Новою Поштою вкажіть місто та відділення.")
+        self.recipient_name = self.recipient_name.strip()
+        if bool(self.recipient_name) != bool(self.recipient_phone):
+            raise ValueError("Для іншого отримувача вкажіть і ім'я, і телефон.")
         if self.method == "pickup":
-            self.city, self.branch = "", ""
+            self.city, self.branch, self.recipient_name, self.recipient_phone = "", "", "", ""
         return self
 
 class Shipment(Input):
@@ -154,7 +152,7 @@ class OrderCreate(Input):
     cosmetic_notes: Long = ""
     priority: Literal["normal", "urgent"] = "normal"
     is_warranty_case: bool = False
-    warranty_claim: bool = False  # клієнт просить гарантійний ремонт; рішення за працівником
+    warranty_claim: bool = False
     delivery: Delivery | None = None
 
 class OrderEdit(Input):
@@ -216,7 +214,7 @@ class QuickRequest(Input):
     device: NewDevice
     problem_description: Long = Field(min_length=3)
     delivery: Delivery | None = None
-    website: str = Field(default="", max_length=200)  # приманка для ботів: людина це поле не бачить
+    website: str = Field(default="", max_length=200)
 
 class Intake(Input):
     phone: Phone | None = None

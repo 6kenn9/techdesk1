@@ -30,7 +30,6 @@ def token(user):
     return jwt.encode({"sub": str(user.id), "ver": user.token_version or 0, "exp": now() + timedelta(hours=8)},
                       JWT_SECRET, algorithm="HS256")
 
-# З тимчасовим паролем від адміністратора доступні лише ці маршрути: дізнатися про себе й задати власний пароль.
 TEMPORARY_PASSWORD_PATHS = {"/api/auth/me", "/api/auth/password"}
 
 def get_current_user(db: Db, request: Request, credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]):
@@ -62,7 +61,6 @@ Staff = Annotated[User, Depends(require_role("admin", "master"))]
 Admin = Annotated[User, Depends(require_role("admin"))]
 
 class RateLimiter:
-    """Обмежує кількість подій для ключа (IP, e-mail) у ковзному часовому вікні."""
     def __init__(self, limit, window, clock=monotonic):
         self.limit, self.window, self.clock = limit, window, clock
         self.events = defaultdict(deque)
@@ -79,7 +77,6 @@ class RateLimiter:
             return len(self._recent(key)) >= self.limit
 
     def hit(self, key):
-        """Реєструє подію; повертає True, якщо ліміт перевищено."""
         with self.lock:
             queue = self._recent(key)
             queue.append(self.clock())
@@ -90,7 +87,6 @@ class RateLimiter:
             self.events.pop(key, None)
 
 def client_ip(request: Request):
-    # nginx передає справжню адресу клієнта в X-Real-IP; без проксі береться адреса з'єднання.
     return request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")
 
 def throttle(limiter, scope):

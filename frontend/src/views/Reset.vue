@@ -1,5 +1,4 @@
 <script setup>
-// Відновлення пароля: без токена — запит листа, з токеном із листа — новий пароль.
 import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, ArrowRight } from 'lucide-vue-next'

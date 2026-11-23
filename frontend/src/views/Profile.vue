@@ -10,7 +10,6 @@ const session = useSession(), router = useRouter()
 const form = reactive({ current_password: '', new_password: '', repeat: '' })
 const busy = ref(false),
   error = ref('')
-// Розбіжність показуємо одразу під полем повтору, а не після надсилання.
 const mismatch = computed(() => form.repeat !== '' && form.new_password !== form.repeat)
 async function change() {
   error.value = ''
@@ -23,7 +22,7 @@ async function change() {
     session.user = result.user
     Object.assign(form, { current_password: '', new_password: '', repeat: '' })
     session.notify('Пароль змінено. На інших пристроях потрібно буде увійти знову.')
-    if (temporary) await router.push(session.home)  // після тимчасового пароля — до звичайної роботи
+    if (temporary) await router.push(session.home)
   } catch (e) {
     error.value = e.message
   } finally {

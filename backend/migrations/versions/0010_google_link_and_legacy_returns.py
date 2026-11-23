@@ -1,4 +1,3 @@
-"""Підтверджене пов'язання входу через Google; старі скасовані заявки вважаються повернутими"""
 from alembic import op
 import sqlalchemy as sa
 revision = '0010'
@@ -8,8 +7,6 @@ depends_on = None
 
 def upgrade():
     op.add_column('users', sa.Column('google_linked', sa.Boolean(), nullable=False, server_default=sa.false()))
-    # До етапу «Повернуто клієнту» скасування було кінцевим: пристрій віддавали одразу.
-    # Без цього всі старі скасовані заявки з'явилися б у вкладці «До видачі».
     op.execute("""
         INSERT INTO order_status_history (order_id, changed_by_id, old_status, new_status, comment, changed_at)
         SELECT id, COALESCE(master_id, client_id), 'cancelled', 'returned',

@@ -30,17 +30,13 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     telegram_chat_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
     telegram_link_code: Mapped[str | None] = mapped_column(String(32), unique=True)
-    # чат лишається прив'язаним, але сповіщення призупинено командою /stop
     telegram_muted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     telegram_link_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     claim_token_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
     claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # зміна пароля збільшує версію, і всі раніше видані токени входу стають недійсними
     token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
-    # вхід через Google пов'язано з кабінетом: кабінет створено через Google або власник один раз підтвердив пароль
     google_linked: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
-    # відновлення пароля листом: зберігається лише хеш одноразового посилання
     reset_token_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
     reset_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = timestamp()
@@ -78,7 +74,6 @@ class Order(Base):
         CheckConstraint("warranty_days >= 0 AND paid_amount >= 0", name="valid_order_amounts"),
         CheckConstraint("rating IS NULL OR rating BETWEEN 1 AND 5", name="valid_rating"),
         CheckConstraint("delivery_method IN ('pickup', 'nova_poshta')", name="valid_delivery"),
-        # правила цілісності, які раніше перевіряв лише код (міграція 0012)
         CheckConstraint("priority IN ('normal', 'urgent')", name="valid_priority"),
         CheckConstraint("works_total >= 0 AND parts_total >= 0 AND (approved_total IS NULL OR approved_total >= 0)",
                         name="nonnegative_totals"),
@@ -88,8 +83,7 @@ class Order(Base):
         CheckConstraint("rating IS NULL OR status = 'completed'", name="rating_after_completion"),
         CheckConstraint("delivery_method <> 'nova_poshta' OR (delivery_city <> '' AND delivery_branch <> '')",
                         name="shipping_address"),
-        # один пристрій — одна відкрита заявка; скасована теж відкрита, доки пристрій не повернуто
-        # (крім онлайн-заявки, пристрій якої так і не надійшов до центру)
+        CheckConstraint("(delivery_recipient_name = '') = (delivery_recipient_phone = '')", name="recipient_pair"),
         Index("uq_open_order_per_device", "device_id", unique=True,
               postgresql_where=text("status NOT IN ('completed', 'returned') AND NOT (status = 'cancelled' AND device_received_at IS NULL)")),
     )
@@ -106,35 +100,31 @@ class Order(Base):
     diagnostics: Mapped[str] = mapped_column(Text, default="")
     internal_notes: Mapped[str] = mapped_column(Text, default="")
     is_warranty_case: Mapped[bool] = mapped_column(default=False)
-    # клієнт просить гарантійний ремонт; рішення (is_warranty_case) ухвалює майстер або адміністратор
     warranty_claim: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     works_total: Mapped[Decimal] = money()
     parts_total: Mapped[Decimal] = money()
     total_cost: Mapped[Decimal] = money()
     paid_amount: Mapped[Decimal] = money()
     approved_total: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
-    # склад кошторису (роботи й запчастини), який клієнт погодив; будь-яка зміна потребує нової згоди
     approved_items: Mapped[str | None] = mapped_column(String(64))
     client_approval_status: Mapped[str] = mapped_column(String(15), default="pending")
     approval_comment: Mapped[str] = mapped_column(Text, default="")
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     warranty_days: Mapped[int] = mapped_column(default=90)
     warranty_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # оцінка клієнта після завершення ремонту
     rating: Mapped[int | None] = mapped_column(SmallInteger)
     rating_comment: Mapped[str] = mapped_column(Text, default="", server_default="")
     rated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # коли бот нагадав про кінець гарантії та про профілактику (щоб не надсилати двічі)
     warranty_reminded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     maintenance_reminded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # спосіб повернення пристрою: самовивіз або відправка Новою Поштою
     delivery_method: Mapped[str] = mapped_column(String(15), default="pickup", server_default="pickup")
     delivery_city: Mapped[str] = mapped_column(String(80), default="", server_default="")
     delivery_branch: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    delivery_recipient_name: Mapped[str] = mapped_column(String(150), default="", server_default="")
+    delivery_recipient_phone: Mapped[str] = mapped_column(String(20), default="", server_default="")
     delivery_ttn: Mapped[str | None] = mapped_column(String(14))
     created_at: Mapped[datetime] = timestamp()
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # коли пристрій фізично надійшов до центру; для онлайн-заявки порожньо, доки працівник не позначить «Пристрій отримано»
     device_received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
@@ -247,7 +237,6 @@ class DevicePhoto(Base):
     created_at: Mapped[datetime] = timestamp()
 
 class Payment(Base):
-    """Окрема оплата за заявкою: можна прийняти частину готівкою, а решту карткою."""
     __tablename__ = "payments"
     __table_args__ = (CheckConstraint("amount > 0", name="positive_payment"),
                       CheckConstraint("method IN ('cash', 'card', 'transfer')", name="valid_payment_method"))
@@ -260,7 +249,6 @@ class Payment(Base):
     created_at: Mapped[datetime] = timestamp()
 
 class Notification(Base):
-    """Сповіщення працівника на сайті (дзвіночок у верхньому рядку)."""
     __tablename__ = "notifications"
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)

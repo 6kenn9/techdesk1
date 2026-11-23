@@ -1,4 +1,3 @@
-"""Звіти у форматі Excel (.xlsx): справжні числа й дати, ширина колонок, закріплена шапка."""
 import io
 from datetime import date, datetime
 from decimal import Decimal
@@ -17,7 +16,7 @@ MONEY = '#,##0.00'
 DATE = 'DD.MM.YYYY'
 
 class Money(Decimal):
-    """Позначка для грошової колонки (формат 0,00)."""
+    pass
 
 def _width(value):
     if value is None:
@@ -41,9 +40,8 @@ def _write(ws, row_idx, values, header=False):
             elif isinstance(value, (date, datetime)):
                 cell.number_format = DATE
             elif isinstance(value, str):
-                cell.number_format = "@"  # телефони й серійні номери лишаються текстом, без 3,81E+11
+                cell.number_format = "@"
         if isinstance(value, str) and value.startswith("="):
-            # openpyxl записує рядок «=...» як формулу; ім'я клієнта «=HYPERLINK(...)» має лишитися текстом
             cell.data_type = "s"
 
 def table_sheet(wb, title, header, rows, widths=None):
@@ -61,7 +59,6 @@ def table_sheet(wb, title, header, rows, widths=None):
     return ws
 
 def report_sheet(wb, title, heading, sections):
-    """Звіт із кількох маленьких таблиць: sections = [(назва, шапка, рядки), ...]."""
     ws = wb.create_sheet(title[:31])
     ws.cell(row=1, column=1, value=heading).font = TITLE_FONT
     row, widths = 3, {}

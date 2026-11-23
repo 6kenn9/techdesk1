@@ -14,13 +14,11 @@ const form = reactive({ email: "", password: "", full_name: "", phone: "" });
 const error = ref("");
 const busy = ref(false);
 
-// ----- Вхід через Google (Google Identity Services) -----
 const googleId = ref("");
 const googleButton = ref(null);
 const googleCredential = ref("");
 const googlePhone = ref("");
 const googleName = ref("");
-// Кабінет із цією поштою вже є: власник один раз підтверджує пароль, щоб пов’язати з ним вхід через Google.
 const googlePassword = ref("");
 const googleLinkEmail = ref("");
 const googleCanReset = ref(false);
@@ -114,7 +112,7 @@ onMounted(async () => {
     await loadGoogle();
     await drawGoogle();
   } catch {
-    googleId.value = ""; // немає доступу до Google — лишається звичайна форма
+    googleId.value = "";
   }
 });
 watch(register, drawGoogle);

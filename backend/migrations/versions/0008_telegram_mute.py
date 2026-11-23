@@ -1,4 +1,3 @@
-"""Призупинення сповіщень у Telegram без відв'язування чату"""
 from alembic import op
 import sqlalchemy as sa
 revision = '0008'

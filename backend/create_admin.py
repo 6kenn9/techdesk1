@@ -1,4 +1,3 @@
-"""Create the first administrator for a database without demo accounts."""
 from getpass import getpass
 from pydantic import ValidationError
 from app.api.auth import create_account

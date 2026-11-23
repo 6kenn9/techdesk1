@@ -1,9 +1,7 @@
-"""Сповіщення працівників на сайті: про нові заявки клієнтів, рішення щодо кошторису й скасування."""
 from sqlalchemy import select
 from ..models.models import Device, Notification, User
 
 def notify_staff(db, order, kind, text, actor_id):
-    """Отримувачі: адміністратори та відповідальний майстер; для нової вільної заявки — усі активні майстри."""
     staff = db.scalars(select(User).where(User.is_active.is_(True), User.role.in_(("admin", "master"))))
     recipients = set()
     for person in staff:

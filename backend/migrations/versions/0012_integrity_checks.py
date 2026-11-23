@@ -1,5 +1,3 @@
-"""Правила цілісності в самій базі: суми, етапи, доставка, одна відкрита заявка на пристрій;
-оплати без запису в журналі отримують запис, щоб «оплачено» збігалося з таблицею payments."""
 from alembic import op
 
 revision = '0012'
@@ -22,7 +20,6 @@ CHECKS = [
 
 
 def upgrade():
-    # Демодані та старі заявки мали «оплачено» без запису в журналі оплат: додаємо запис на різницю.
     op.execute("""
         INSERT INTO payments (order_id, amount, method, note, created_by_id, created_at)
         SELECT o.id, o.paid_amount - COALESCE(p.total, 0), 'cash', 'Оплату внесено до запуску журналу оплат',
@@ -32,8 +29,6 @@ def upgrade():
         LEFT JOIN (SELECT order_id, SUM(amount) AS total FROM payments GROUP BY order_id) p ON p.order_id = o.id
         WHERE o.paid_amount > COALESCE(p.total, 0)
     """)
-    # NOT VALID: правило діє для всіх нових змін одразу; наявні рядки перевіряються окремо,
-    # і якщо якийсь старий запис його порушує, оновлення бази не зупиняється (буде лише повідомлення в журналі).
     for table, name, rule in CHECKS:
         op.execute(f"ALTER TABLE {table} ADD CONSTRAINT {name} CHECK ({rule}) NOT VALID")
         op.execute(f"""

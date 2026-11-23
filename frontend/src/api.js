@@ -1,18 +1,15 @@
-// Сеанс зберігається для всього браузера: посилання з Telegram, QR-код квитанції й нагадування
-// відкриваються в новій вкладці, і користувач не мусить входити щоразу. Строк дії токена — 8 годин.
 const TOKEN_KEY = 'techdesk-token'
 export function getToken() {
   try { return localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY) } catch { return null }
 }
 export function setToken(value) {
   try { localStorage.setItem(TOKEN_KEY, value); sessionStorage.removeItem(TOKEN_KEY) }
-  catch { try { sessionStorage.setItem(TOKEN_KEY, value) } catch { /* сховище недоступне: сеанс до перезавантаження */ } }
+  catch { try { sessionStorage.setItem(TOKEN_KEY, value) } catch {} }
 }
 export function clearToken() {
-  try { localStorage.removeItem(TOKEN_KEY) } catch { /* недоступне */ }
-  try { sessionStorage.removeItem(TOKEN_KEY) } catch { /* недоступне */ }
+  try { localStorage.removeItem(TOKEN_KEY) } catch {}
+  try { sessionStorage.removeItem(TOKEN_KEY) } catch {}
 }
-// Вхід, вихід чи зміна пароля в іншій вкладці: ця вкладка перезавантажується з актуальним сеансом.
 export function watchToken() {
   window.addEventListener('storage', event => { if (event.key === TOKEN_KEY) location.reload() })
 }

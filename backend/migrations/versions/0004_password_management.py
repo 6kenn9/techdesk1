@@ -1,4 +1,3 @@
-"""Password management: token version for revoking sessions, flag for temporary passwords"""
 from alembic import op
 import sqlalchemy as sa
 revision = '0004'

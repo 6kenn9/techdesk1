@@ -1,7 +1,3 @@
-/* Доповнення до style.css: стилі нового робочого потоку майстра та виправлення Firefox. */
-
-/* position: relative утримує приховані підписи (.sr-only) всередині прокручуваної області:
-   без цього Firefox прокручував усю сторінку разом із меню. */
 .workspace, .workspace-main { position: relative; }
 
 .day-more { margin: 10px 0 0; font-size: .9rem; }
@@ -14,15 +10,12 @@
 .quick-chip.late span { background: var(--danger-bg); color: var(--danger); }
 .quick-chip.pickup span { background: var(--ok-bg); color: var(--ok); }
 
-/* Номери етапів на головній: основний шрифт замість моноширинного, цифри однакової ширини. */
 .step-num.mono { font-family: inherit; font-size: .8rem; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .03em; }
 
-/* Вхід через Google */
 .auth-or { display: flex; align-items: center; gap: 10px; margin: 14px 0 12px; color: var(--muted, #6b7280); font-size: .85rem; }
 .auth-or::before, .auth-or::after { content: ""; flex: 1; height: 1px; background: var(--border, rgba(127,127,127,.3)); }
 .google-slot { display: flex; justify-content: center; min-height: 44px; color-scheme: light; }
 
-/* Головна: замість пошуку — дії та коротка інформація */
 .hero-clean { padding-block: 72px 60px; }
 .hero-clean-head p { margin-top: 16px; }
 .hero-cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
@@ -33,12 +26,9 @@
   .hero-cta ~ .tracker-card, .hero-cta ~ .hero-highlights { margin-top: 12px; }
 }
 
-/* Кабінет: етап і «Оцінити ремонт» з відступом, на вузькому екрані — одне під одним */
 .result-cell { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
 .result-cell .rate-link { margin-top: 0; }
 
-/* Перехід за пунктом меню головної: розділ не ховається під липкою шапкою */
 .landing section[id], .landing footer[id] { scroll-margin-top: 72px; }
 
-/* Аналітика: порожня смуга способу оплати без «кульки» */
 .pay-bar i { padding: 0; min-width: 0; }

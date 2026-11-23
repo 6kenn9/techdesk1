@@ -7,7 +7,6 @@ from ..schemas.schemas import Defect, DeviceCreate, Hardware, OwnerTransfer, Pre
 from ..services.domain import IDENTITY_FIELDS, access_device, still_open, access_order, add_preset, change_identity, change_spec, passport, row, warranties
 
 def visible_to(query, user):
-    """Клієнт бачить фото пристрою без заявки та фото власних заявок, але не заявок попереднього власника."""
     if user.role != "client":
         return query
     return query.where(or_(DevicePhoto.order_id.is_(None),
@@ -101,8 +100,6 @@ def upgrade(device_id: int, payload: Upgrade, db: Db, user: Staff):
 
 @router.post("/{device_id}/transfer")
 def transfer(device_id: int, payload: OwnerTransfer, db: Db, user: Admin):
-    """Пристрій продали чи подарували: паспорт з усією історією переходить до іншого клієнта.
-    Попередні заявки лишаються за старим власником, нові оформлюються на нового."""
     device = access_device(db, device_id, user, lock=True)
     owner = db.get(User, payload.owner_id)
     if not owner or owner.role != "client" or not owner.is_active:

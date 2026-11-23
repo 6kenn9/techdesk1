@@ -1,4 +1,3 @@
-"""Позначки надісланих нагадувань про кінець гарантії та планову профілактику"""
 from alembic import op
 import sqlalchemy as sa
 revision = '0007'

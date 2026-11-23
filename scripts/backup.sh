@@ -1,5 +1,4 @@
 #!/bin/sh
-# Резервна копія бази TechDesk з Docker (Linux/macOS): ./scripts/backup.sh
 set -e
 cd "$(dirname "$0")/.."
 mkdir -p backups

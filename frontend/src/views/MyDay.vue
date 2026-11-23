@@ -57,7 +57,6 @@ onMounted(load)
       <template v-if="free.length"> · вільних <strong>{{ free.length }}</strong></template>
     </p>
 
-    <!-- 1. Що робити зараз -->
     <template v-if="todo.length">
       <h2 class="day-heading">Зробити зараз</h2>
       <div class="day-groups">
@@ -73,7 +72,6 @@ onMounted(load)
       {{ nothing ? (free.length ? 'У черзі нічого немає. Візьміть заявку з вільних нижче.' : 'У черзі нічого немає, вільних заявок теж.') : 'Нічого робити не потрібно: усе чекає на клієнтів.' }}
     </div>
 
-    <!-- 2. Вільні заявки: показуємо кілька найстарших, решта в журналі -->
     <template v-if="free.length">
       <h2 class="day-heading">Вільні заявки <span class="count">{{ free.length }}</span></h2>
       <section class="card">
@@ -87,7 +85,6 @@ onMounted(load)
       </section>
     </template>
 
-    <!-- 3. М’яч на боці клієнта: тут нічого робити, лише стежити за строками -->
     <template v-if="approval.length || pickup.length">
       <h2 class="day-heading">Чекаємо на клієнтів</h2>
       <div class="day-groups">

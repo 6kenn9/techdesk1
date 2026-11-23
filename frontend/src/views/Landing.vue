@@ -162,7 +162,6 @@ async function lookup() {
 
 onMounted(async () => {
   if (!code.value) return
-  // QR із квитанції відкрив увійшлий працівник або власник — ведемо одразу в заявку
   if (session.user) {
     const id = await orderIdByNumber(code.value)
     if (id) return router.replace('/orders/' + id)
@@ -197,7 +196,6 @@ onMounted(async () => {
     </header>
 
     <main>
-      <!-- 1. Перший екран -->
       <section class="hero-clean wrap" aria-labelledby="portal-title">
         <div class="hero-clean-head">
           <h1 id="portal-title">Сервісний центр комп’ютерної та цифрової техніки TechDesk</h1>
@@ -216,7 +214,6 @@ onMounted(async () => {
           <a href="#services" class="button">Послуги та ціни</a>
         </div>
 
-        <!-- Статус за QR-кодом із квитанції: /track/TD-2026-0004 -->
         <div v-if="code" id="tracking" class="card tracker-card">
           <p v-if="loading" class="muted">Завантаження статусу…</p>
           <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -252,7 +249,6 @@ onMounted(async () => {
         </div>
       </section>
 
-      <!-- 2. Послуги та прейскурант -->
       <section id="services" class="landing-section wrap" aria-labelledby="services-title">
         <div class="landing-section-head">
           <div>
@@ -308,7 +304,6 @@ onMounted(async () => {
         </div>
       </section>
 
-      <!-- 3. Як ми працюємо з клієнтом -->
       <section id="advantages" class="landing-section landing-band" aria-labelledby="advantages-title">
         <div class="wrap">
           <div class="landing-section-head">
@@ -329,7 +324,6 @@ onMounted(async () => {
         </div>
       </section>
 
-      <!-- 4. Етапи ремонту та часті питання -->
       <section id="workflow" class="landing-section wrap" aria-labelledby="workflow-title">
         <div class="landing-section-head">
           <div>

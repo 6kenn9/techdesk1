@@ -2,7 +2,6 @@
 import { ref } from 'vue'
 import { api, query } from '../api'
 import { categories, icons, problemHints } from '../domain'
-// Мінімум полів: тип пристрою, модель (з підказками), несправність. Серійний номер — за бажанням.
 const form = defineModel({ required: true })
 defineProps({ serialLabel: { type: String, default: 'Серійний номер (необов’язково)' }, showSerial: { type: Boolean, default: false } })
 const suggestions = ref([]),

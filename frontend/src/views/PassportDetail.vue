@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { ArrowLeft, ArrowUpRight, Copy, Cpu, Pencil, QrCode, Tag, Wrench } from 'lucide-vue-next'
+import { ArrowLeft, ArrowUpRight, Copy, Cpu, Pencil, QrCode, Wrench } from 'lucide-vue-next'
 import { api, download, query } from '../api'
 import { dateTime, icons, specLabels } from '../domain'
 import { useSession } from '../state'
@@ -12,7 +12,6 @@ import Warranty from '../components/Warranty.vue'
 import PhotoGallery from '../components/PhotoGallery.vue'
 
 const id = useRoute().params.id
-// Журнал паспорта містить і зміни даних, за якими впізнають пристрій.
 const historyLabels = { owner: 'Власник', serial_number: 'Серійний номер', device_category: 'Категорія', brand: 'Виробник', model: 'Модель' }
 const session = useSession()
 const item = ref(null),
@@ -71,7 +70,6 @@ async function save() {
     busy.value = false
   }
 }
-// Зміна власника: пристрій продали чи подарували, паспорт з історією переходить до іншого клієнта.
 const transferForm = ref({ phone: '', reason: '' }),
   buyer = ref(null)
 function openTransfer() {
@@ -110,13 +108,6 @@ async function showQr() {
     session.notify(e.message, 'error')
   }
 }
-async function label() {
-  try {
-    await download('/passports/' + id + '/label', 'наліпка-' + (item.value.serial_number || id) + '.pdf')
-  } catch (e) {
-    session.notify(e.message, 'error')
-  }
-}
 async function copy() {
   try {
     await navigator.clipboard.writeText(item.value.serial_number || '')
@@ -145,10 +136,6 @@ async function copy() {
         <button class="button" @click="showQr">
           <QrCode :size="18" />
           Код паспорта
-        </button>
-        <button v-if="session.staff" class="button" @click="label">
-          <Tag :size="17" />
-          Наліпка
         </button>
         <button v-if="session.staff" class="button primary" @click="edit">
           <Pencil :size="16" />

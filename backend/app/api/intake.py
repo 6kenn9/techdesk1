@@ -1,4 +1,3 @@
-"""Швидке оформлення: заявка без реєстрації, приймання працівником за телефоном, підказки моделей."""
 import secrets
 from datetime import timedelta
 from hashlib import sha256
@@ -25,7 +24,6 @@ def issue_claim(user):
     return raw
 
 def find_or_create_client(db, phone, full_name, public=False):
-    """Повертає (клієнт, claim-токен). Токен видається лише для щойно створеного гостьового кабінету."""
     client = db.scalar(select(User).where(User.phone == phone).with_for_update())
     if client:
         if client.role != "client" or not client.is_active:
@@ -38,7 +36,6 @@ def find_or_create_client(db, phone, full_name, public=False):
     return client, issue_claim(client)
 
 def with_preset_specs(db, data):
-    """Клієнт не вводить характеристики: якщо модель є в довіднику, паспорт заповнюється з нього."""
     if not data.get("specifications"):
         preset = db.scalar(select(ModelPreset).where(
             ModelPreset.device_category == data["device_category"],
@@ -49,7 +46,6 @@ def with_preset_specs(db, data):
     return data
 
 def register_device(db, owner, data, public=False):
-    """public — публічна форма: відповідь не має розкривати, що такий серійний номер уже є в базі."""
     data = with_preset_specs(db, dict(data))
     if data.get("serial_number"):
         existing = db.scalar(select(Device).where(Device.serial_number == data["serial_number"]))
@@ -64,12 +60,11 @@ def register_device(db, owner, data, public=False):
 
 @router.get("/public/models")
 def public_models(db: Db, q: str = Query("", max_length=80), category: str = Query("", max_length=40)):
-    """Підказки моделей для автодоповнення: без характеристик і без авторизації."""
     query = select(ModelPreset)
     if category:
         query = query.where(ModelPreset.device_category == category)
     title = ModelPreset.brand + " " + ModelPreset.model_name
-    for word in q.split()[:6]:  # кожне слово окремо: «legion 5», «5 legion» і «LEGION» знаходять ту саму модель
+    for word in q.split()[:6]:
         query = query.where(title.icontains(word, autoescape=True))
     presets = db.scalars(query.order_by(ModelPreset.brand, ModelPreset.model_name).limit(20))
     return [{"device_category": item.device_category, "brand": item.brand, "model": item.model_name} for item in presets]
@@ -77,7 +72,6 @@ def public_models(db: Db, q: str = Query("", max_length=80), category: str = Que
 @router.get("/passports/spec-suggestion")
 def spec_suggestion(db: Db, user: Staff, category: str = Query(max_length=40), brand: str = Query(max_length=80),
                     model: str = Query(max_length=120)):
-    """Характеристики для нового паспорта: спершу з довідника моделей, інакше з такого самого пристрою в базі."""
     brand, model = brand.strip(), model.strip()
     preset = db.scalar(select(ModelPreset).where(
         ModelPreset.device_category == category, func.lower(ModelPreset.brand) == brand.lower(),
@@ -94,7 +88,7 @@ def spec_suggestion(db: Db, user: Staff, category: str = Query(max_length=40), b
 
 @router.post("/quick-request", status_code=201, dependencies=[throttle(quick_requests, "quick")])
 def quick_request(payload: QuickRequest, db: Db):
-    if payload.website:  # поле-приманка заповнив бот: вдаємо успіх, нічого не зберігаючи
+    if payload.website:
         return {"order_number": "—", "claim_token": None, "account_exists": False}
     client, claim = find_or_create_client(db, payload.phone, payload.full_name, public=True)
     device = register_device(db, client, payload.device.model_dump(), public=True)
@@ -137,7 +131,6 @@ def lookup_client(db: Db, user: Staff, phone: str = Query(min_length=5, max_leng
 
 @router.post("/orders/intake", status_code=201)
 def intake(payload: Intake, db: Db, user: Staff):
-    """Швидке приймання: клієнта шукаємо за телефоном, пристрій — наявний або новий, заявка створюється одним кроком."""
     if user.role == "master" and payload.master_id not in (None, user.id):
         fail(403, "Призначити іншого майстра може адміністратор.")
     validate_master(db, payload.master_id)

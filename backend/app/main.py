@@ -12,7 +12,6 @@ from .core.security import Db, RateLimiter, fail, throttle
 from .models.models import Order
 from .services.domain import LABELS
 
-# Повідомлення програми (зокрема про запуск Telegram-бота) видно в docker compose logs backend.
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s: %(message)s")
 
 @asynccontextmanager
@@ -56,8 +55,6 @@ tracking = RateLimiter(limit=30, window=60)
 
 @app.get("/api/track", dependencies=[throttle(tracking, "track")])
 def track(code: str, db: Db):
-    # Лише за номером заявки: серійний номер надруковано на корпусі й наліпці, тож за ним сторонній
-    # міг би дізнатися, що пристрій зараз у сервісі.
     value = code.strip().upper()
     if not 2 <= len(value) <= 80:
         fail(422, "Введіть номер заявки.")

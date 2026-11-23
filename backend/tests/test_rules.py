@@ -1,4 +1,3 @@
-"""Модульні тести бізнес-правил, які не потребують бази даних."""
 from decimal import Decimal
 
 import pytest
@@ -9,8 +8,7 @@ from app.services.domain import ALLOWED, STAGES, order_total
 def test_lifecycle_moves_forward_only():
     for current, following in zip(STAGES, STAGES[1:]):
         assert following in ALLOWED[current]
-    assert "completed" not in ALLOWED and "returned" not in ALLOWED  # кінцеві етапи
-    # скасований пристрій ще в сервісі: єдиний крок — повернути його клієнту
+    assert "completed" not in ALLOWED and "returned" not in ALLOWED
     assert ALLOWED["cancelled"] == {"returned"}
 
 @pytest.mark.parametrize("stage", ["registered", "diagnostics", "waiting_approval", "in_repair"])
@@ -19,7 +17,7 @@ def test_cancel_allowed_before_pickup(stage):
 
 def test_cannot_cancel_ready_order():
     assert "cancelled" not in ALLOWED["ready_for_pickup"]
-    assert "returned" in ALLOWED["ready_for_pickup"]  # клієнт не забрав або відмовився платити
+    assert "returned" in ALLOWED["ready_for_pickup"]
 
 def test_extra_work_goes_back_to_approval():
     assert "waiting_approval" in ALLOWED["in_repair"]
@@ -41,7 +39,7 @@ def test_exports_do_not_run_formulas():
     assert csv_cell("+380501234567") == "+380501234567" and csv_cell("-120,50") == "-120,50"
     assert csv_cell("Іван Петренко") == "Іван Петренко" and csv_cell(42) == 42
     sheet = table_sheet(Workbook(), "Заявки", ["Клієнт"], [['=HYPERLINK("http://x","клік")']])
-    assert sheet["A2"].data_type == "s"  # текст, а не формула
+    assert sheet["A2"].data_type == "s"
 
 def test_rate_limiter_window():
     moment = [0.0]

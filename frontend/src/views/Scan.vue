@@ -34,7 +34,6 @@ async function start() {
     active.value = true
     found.value = ''
     slow.value = false
-    // Якщо за 8 секунд коду не знайдено, підкажемо, як тримати наліпку чи телефон.
     clearTimeout(slowTimer)
     slowTimer = setTimeout(() => (slow.value = active.value), 8000)
     tick()
@@ -81,13 +80,11 @@ async function open(value) {
     const url = new URL(text)
     const path = url.pathname.match(/^\/(passports|orders)\/\d+$|^\/track\/[^/]+$/)?.[0]
     if (path?.startsWith('/track/')) {
-      // QR із квитанції: працівнику (і власнику) відкриваємо саму заявку, а не публічний статус
       const id = await orderIdByNumber(decodeURIComponent(path.slice(7)))
       return router.push(id ? '/orders/' + id : path)
     }
     if (path) return router.push(path + url.hash)
   } catch {
-    /* не посилання — шукаємо як серійний номер */
   }
   busy.value = true
   try {
@@ -96,7 +93,6 @@ async function open(value) {
     const device = await api('/passports/lookup-sn/' + encodeURIComponent(text))
     if (device) return router.push('/passports/' + device.id)
     session.notify('Паспорт не знайдено. Можна оформити нову заявку.')
-    // Працівник оформлює пристрій через приймання, клієнт — через свою форму.
     router.push({ path: session.staff ? '/orders/intake' : '/orders/new', query: { serial: text } })
   } catch (e) {
     message.value = e.message
@@ -140,7 +136,6 @@ onUnmounted(stop)
       <details class="fold scan-help">
         <summary>Де взяти QR-код</summary>
         <ul>
-          <li>Наліпка на корпусі: у паспорті пристрою кнопка «Наліпка» друкує її для термопринтера.</li>
           <li>Екран телефону: відкрийте паспорт і натисніть «Код паспорта», потім покажіть телефон камері.</li>
           <li>Квитанція про приймання: QR-код у PDF веде на заявку.</li>
         </ul>

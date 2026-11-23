@@ -1,5 +1,4 @@
 :root {
-  /* Без цього браузер малює кнопки й поля за темою Windows: у світлій темі сайту текст ставав білим. */
   color-scheme: light;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   color: var(--ink);
@@ -216,7 +215,6 @@ td a { font-weight: 650; }
 
 .timeline { margin: 14px 0 4px; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); list-style: none; }
 .timeline li { text-align: center; position: relative; min-width: 0; padding: 0 4px; }
-/* лінія між етапами: від центру попереднього кола до центру поточного */
 .timeline li::before { content: ""; position: absolute; top: 14px; left: calc(-50% + 18px); right: calc(50% + 18px); height: 2px; border-radius: 2px; background: var(--border-strong); }
 .timeline li:first-child::before { display: none; }
 .timeline li.done::before, .timeline li.current::before { background: var(--accent); }
@@ -250,7 +248,6 @@ td a { font-weight: 650; }
 .public-links a { color: var(--ink-soft); white-space: nowrap; }
 .public-links a:hover { color: var(--accent); }
 
-/* 1. CLEAN HERO + ORDER TRACKER */
 .hero-clean {
   padding-block: 42px 36px;
   display: grid;
@@ -317,7 +314,6 @@ td a { font-weight: 650; }
 .hero-highlights strong { font-size: .88rem; color: var(--ink); }
 .hero-highlights span { font-size: .84rem; color: var(--muted); }
 
-/* 2. CLEAN SERVICE TABS + PRICE TABLE */
 .landing-section { padding-block: 42px; border-top: 1px solid var(--border); }
 .landing-band { background: var(--surface-strong); border-bottom: 1px solid var(--border-strong); }
 .landing-section-head {
@@ -370,7 +366,6 @@ td a { font-weight: 650; }
 .service-table-intro h3 { font-size: 1.04rem; }
 .service-table-intro p { margin: 4px 0 0; font-size: .9rem; }
 
-/* 3. CALM 2x2 ADVANTAGES SECTION */
 .simple-feature-card {
   padding: 18px 20px;
   display: grid;
@@ -396,7 +391,6 @@ td a { font-weight: 650; }
 .simple-feature-head h3 { font-size: .98rem; line-height: 1.3; }
 .simple-feature-card p { margin: 0; font-size: .9rem; line-height: 1.55; }
 
-/* 4. WORKFLOW GRID + FAQ */
 .demo-panel, .workflow-grid, .order-list {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -554,7 +548,6 @@ td a { font-weight: 650; }
   .page-head { margin-bottom: 11px; }
 }
 
-/* Telegram */
 .telegram-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
 .telegram-card strong { display: inline-flex; align-items: center; gap: 7px; }
 .telegram-card p { margin: 4px 0 0; color: var(--muted); }
@@ -562,7 +555,6 @@ td a { font-weight: 650; }
 .link-button { border: 0; background: none; padding: 0; color: var(--accent, #173da3); font: inherit; font-weight: 600; cursor: pointer; }
 .link-button:disabled { opacity: .5; cursor: default; }
 
-/* Фото пристрою */
 .photo-upload { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
 .photo-upload > label:not(.button) { flex: 1 1 200px; }
 .photo-upload .button.disabled { opacity: .6; pointer-events: none; }
@@ -576,7 +568,6 @@ td a { font-weight: 650; }
 .photo-viewer img { display: block; max-width: 100%; max-height: 75vh; margin: 0 auto 8px; border-radius: 4px; }
 .photo-viewer p { margin: 0; font-size: .9rem; color: var(--muted); }
 
-/* Сканер */
 .scanner { max-width: 560px; }
 .scanner-view { position: relative; overflow: hidden; border-radius: var(--radius); background: #0f172a; aspect-ratio: 4 / 3; }
 .scanner-view video { width: 100%; height: 100%; object-fit: cover; }
@@ -589,7 +580,6 @@ td a { font-weight: 650; }
 
 @media (max-width: 650px) { .timeline-caption { display: block; } }
 
-/* Наступний крок для працівника */
 .next-step { position: sticky; top: 58px; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
   padding: 14px 16px; background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius-sm); }
 .next-step small { display: block; text-transform: uppercase; letter-spacing: .05em; font-size: .74rem; font-weight: 650; }
@@ -601,7 +591,6 @@ td a { font-weight: 650; }
 .next-step.ok { border-left-color: var(--ok); }
 .button.large { min-height: 44px; padding: 10px 18px; font-size: .95rem; }
 
-/* Стан заявки для клієнта */
 .status-hero { display: flex; gap: 16px; padding: 20px; border-radius: var(--radius); background: var(--accent-soft); border: 1px solid var(--accent-border); }
 .status-hero.warn { background: var(--warn-bg); border-color: var(--warn-border); }
 .status-hero.ok { background: var(--ok-bg); border-color: var(--ok-border); }
@@ -624,7 +613,6 @@ td a { font-weight: 650; }
   .status-hero .actions .button { flex: 1 1 100%; }
 }
 
-/* Картка заявки на дошці та в «Моєму дні» */
 .order-card { display: grid; gap: 4px; padding: 9px 10px; border: 1px solid var(--border); border-left: 3px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--ink); font-size: .88rem; transition: border-color .15s; }
 .order-card:hover { border-color: var(--border-hover); }
 .order-card.urgent { border-left-color: var(--danger); }
@@ -641,14 +629,12 @@ td a { font-weight: 650; }
 .tag.ok { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok); }
 .kanban-col h3 { display: flex; justify-content: space-between; align-items: center; gap: 4px; }
 
-/* Мій день */
 .day-groups { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); align-items: start; }
 .day-group h2, .day-groups + .empty + section h2, section h2 svg { vertical-align: -3px; }
 .day-group h2 { display: flex; align-items: center; gap: 7px; }
 .day-list { display: grid; gap: 8px; }
 .free-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
 
-/* Аналітика */
 .period-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .period-bar .segmented .button { border-radius: 0; border-right: 1px solid var(--border); }
 .period-bar .segmented .button:last-child { border-right: 0; }
@@ -671,7 +657,6 @@ td a { font-weight: 650; }
 .attention-list small.critical { color: var(--danger); font-weight: 650; }
 @media (max-width: 850px) { .attention-grid { grid-template-columns: minmax(0, 1fr); } }
 
-/* Швидке оформлення */
 .tile-group { border: 0; padding: 0; margin: 0; min-width: 0; }
 .tile-group legend { font-size: .86rem; font-weight: 600; margin-bottom: 6px; padding: 0; }
 .tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
@@ -703,7 +688,6 @@ td a { font-weight: 650; }
 @media (max-width: 640px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } .device-picks { grid-template-columns: 1fr; } }
 .muted { color: var(--muted); font-size: .92rem; margin: 6px 0 0; }
 
-/* Перемикач теми */
 .theme-toggle { color: var(--muted); }
 .theme-toggle:hover { color: var(--ink); }
 :root[data-theme="dark"] img[src$="mark.svg"] { filter: none; }
@@ -737,7 +721,6 @@ td a { font-weight: 650; }
 .quick-chip.ready span { background: var(--ok-bg); color: var(--ok); }
 .quick-chip.selected { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); }
 .quick-chip.selected span { background: var(--accent); color: var(--on-accent); }
-/* Сповіщення працівника */
 .bell { position: relative; }
 .bell-badge { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--danger); color: var(--surface); font-size: .75rem; font-weight: 700; display: grid; place-items: center; line-height: 1; }
 .bell-panel { position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; width: min(380px, calc(100vw - 24px)); max-height: 70vh; overflow: auto; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow-md); padding: 6px; }
@@ -751,7 +734,6 @@ td a { font-weight: 650; }
 .bell-item.unread { color: var(--ink); background: var(--accent-soft); font-weight: 550; }
 .bell-item.unread svg { color: var(--accent); }
 .bell-item.cancelled svg { color: var(--danger); }
-/* Оплати */
 .payments { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
 .payments li { display: flex; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-subtle); }
 .payments small { display: block; color: var(--muted); font-size: .78rem; }
@@ -766,7 +748,6 @@ td a { font-weight: 650; }
 .pay-bar i.cash { background: var(--chart-3); } .pay-bar i.transfer { background: var(--violet); }
 @media (max-width: 640px) { .pay-row { grid-template-columns: 1fr 90px; } .pay-bar, .pay-row small { display: none; } }
 
-/* Оцінка ремонту і доставка */
 .stars { display: inline-flex; align-items: center; gap: 2px; }
 .stars svg { color: var(--border-strong); fill: transparent; transition: color .12s, fill .12s; }
 .stars svg.on { color: #e3a008; fill: #f5c33b; }
@@ -788,12 +769,10 @@ td a { font-weight: 650; }
   .period-bar .segmented .button { flex: 1 1 30%; border-bottom: 1px solid var(--border); }
 }
 
-/* Порожні стани з дією та помилки біля полів */
 .empty p { margin: 0 0 10px; }
 .empty .button { margin-top: 2px; }
 .field-error { display: block; margin-top: 4px; color: var(--danger); font-size: .84rem; font-weight: 500; }
 
-/* Картка заявки */
 .estimate-table td:last-child, .estimate-table th:last-child { text-align: right; }
 .estimate-table .num { text-align: right; white-space: nowrap; font-family: var(--mono); }
 .estimate-table tfoot td { border-bottom: 0; padding-top: 6px; padding-bottom: 6px; color: var(--muted); }
@@ -814,7 +793,6 @@ td a { font-weight: 650; }
 .fold > summary .chip { margin-left: 6px; }
 .fold[open] > summary { margin-bottom: 12px; }
 
-/* Кабінет клієнта */
 .repair-row { display: flex; justify-content: space-between; gap: 14px; align-items: flex-start; }
 .repair-row p { margin: 4px 0; color: var(--ink-soft); }
 .repair-side { display: grid; gap: 8px; justify-items: end; flex-shrink: 0; }
@@ -824,26 +802,21 @@ td a { font-weight: 650; }
   .repair-side { display: flex; justify-items: start; align-items: center; }
 }
 
-/* Мій день */
 .order-card-sum { margin-left: auto; font-size: .84rem; color: var(--ink-soft); }
 .day-summary { margin: -6px 0 0; color: var(--muted); }
 .day-summary strong { color: var(--ink); }
 .day-summary .late { color: var(--danger); font-weight: 650; }
 .day-heading { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 650; margin: 6px 0 -4px; }
 
-/* Приймання пристрою */
 .more-fields { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; }
 .more-fields > summary { font-size: .92rem; font-weight: 600; color: var(--ink-soft); }
 label > .input-icon { display: flex; margin-top: 5px; }
 label > small { display: block; margin-top: 4px; font-weight: 400; font-size: .84rem; }
 
-/* Таблиці: застряглі заявки й критичні залишки */
 .stale-cell { color: var(--danger); font-weight: 650; }
 
-/* Аналітика */
 .rating-summary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 
-/* Сканер */
 .scan-status { margin: 0; font-weight: 600; color: var(--ink-soft); }
 .scan-status.ok { color: var(--ok); }
 .scan-help ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; color: var(--ink-soft); }
